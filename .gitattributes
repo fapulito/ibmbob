@@ -1,0 +1,17 @@
+﻿# Repo is already 100% LF in the index. Pin it so checkouts stay LF on every
+# machine regardless of local core.autocrlf, and so shell scripts stay
+# executable inside Linux containers (CRLF breaks a shebang).
+* text=auto eol=lf
+
+# Binary: never transform.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.bmp  binary
+*.pdf  binary
+*.mp4  binary
+*.pt   binary
+*.pth  binary
+*.onnx binary
