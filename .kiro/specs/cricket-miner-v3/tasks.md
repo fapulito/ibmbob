@@ -227,7 +227,7 @@ extrinsic), not because the graph was modelled coarsely.
   - Gate 0b prerequisite: install the Bittensor SDK into a venv (`pip install bittensor`); `python -c "import bittensor; print(bittensor.__version__)"` must succeed. Use this SAME venv for the SDK probes, the `get_settings()` print, and `sv` later
   - Gate 0a **STOP GATE**: `sub.metagraph(netuid=44).hotkeys[207]` must equal our hotkey ss58. If it differs or UID 207 does not exist we were deregistered — **STOP and re-plan** (re-registration first, ~743378 rao burn, new UID)
   - Gate 0c: record `sub.neuron_for_uid(207, netuid=44).axon_info`. Expect `ip=0.0.0.0` or `port=0`, confirming Blocker A. A populated correct IPv4 **refutes** Blocker A and step 7 must be skipped
-  - Gate 0d: from `cricket/turbovision`, print `get_settings().SCOREVISION_NETUID` and `.BITTENSOR_SUBTENSOR_ENDPOINT`. Must emit `44 finney`. There is no `.env`, so this is the code default — record it as the baseline
+  - Gate 0d: from `cricket/turbovision`, print `get_settings().SCOREVISION_NETUID` and `.BITTENSOR_SUBTENSOR_ENDPOINT`. Must emit `44 finney`. `.env` exists but sets neither key, so the value still comes from the code default in `settings.py` — record it as the baseline
   - Probe: `curl -o /dev/null -w "%{http_code}" http://<current_v4>:8000/health` → expect `000` (port closed AND `/health` absent; this probe alone cannot separate the two causes)
   - Probe: `curl http://<current_v4>/challenge` without a `Host` header → expect `000` (shared IPv4 routes only by Host/SNI, clause 1.11); with a `Host` header → expect `301` (`force_https`, clause 1.12)
   - Probe: `curl https://cricket-delivery-miner.fly.dev/challenge` → expect `500`, proving the app is alive so the failure is purely edge routing (clause 1.15)
@@ -261,9 +261,14 @@ extrinsic), not because the graph was modelled coarsely.
 
   - [ ] 3.1 **USER ACTION** — create `cricket/turbovision/.env`
     - **Why the agent cannot do this**: workspace rules forbid the agent from creating or editing `.env` or any environment variable file
-    - Required content (design Gate 0e): `GITHUB_USERNAME`, `GITHUB_TOKEN` (GHCR PAT with `write:packages`), `GHCR_REPO=pt-solution`, `BITTENSOR_WALLET_COLD=cricket_miner`, `BITTENSOR_WALLET_HOT=default`, `SCOREVISION_NETUID=44`, `BITTENSOR_SUBTENSOR_ENDPOINT=finney`, `BITTENSOR_SUBTENSOR_FALLBACK=wss://entrypoint-finney.opentensor.ai:443`
+    - Required content (design Gate 0e): `GITHUB_USERNAME`, `GITHUB_TOKEN` (GHCR PAT with `write:packages`), `GHCR_REPO=pt-solution`, `BITTENSOR_WALLET_COLD=cricket_miner`, `BITTENSOR_WALLET_HOT=miner2`, `SCOREVISION_NETUID=44`, `BITTENSOR_SUBTENSOR_ENDPOINT=finney`, `BITTENSOR_SUBTENSOR_FALLBACK=wss://entrypoint-finney.opentensor.ai:443`
+    - `auto_register.sh` (`WALLET_NAME="cricket_miner"`, `HOTKEY_NAME="miner2"`) is the authoritative source for these wallet names — its success check greps the metagraph for hotkey `5CyQ9buHwqgCS7158ytsX8BQvT7WSEH8gDMWq7tqUV3Fshsa` (UID 207). Unlike the netuid/endpoint keys, `settings.py`'s `"default"` fallback for `BITTENSOR_WALLET_COLD`/`BITTENSOR_WALLET_HOT` is WRONG for this deployment, so these two keys may not be safely omitted
+    - The wallet itself lives at `~/.bittensor/wallets` under WSL Ubuntu-24.04 on this machine (confirmed local, not remote). Any command that signs on-chain, including task 14, must run from a process that can see that path
     - **Do NOT copy `env.example` verbatim** — it ships `SCOREVISION_NETUID=423` and `BITTENSOR_SUBTENSOR_ENDPOINT=test`, which would land the commitment on testnet 423: structurally perfect, permanently invisible, and indistinguishable from success (drift D3). The netuid/endpoint/fallback lines above are deliberate explicit pins against exactly that
     - `GITHUB_TOKEN` is a secret: never echoed into logs or command output, never committed, and never placed in `fly.toml` `[env]` (that file is tracked). The container does not need it — only `login_ghcr` on the build host does
+    - `cricket/turbovision/.env` already exists and currently contains only `E2B_API_KEY` (drives an E2B sandbox for Bittensor SDK/Docker work). That key must be preserved, not overwritten, when adding the keys above
+    - `.env` is read by `get_settings()` on the build host only. The deployed container's environment comes from `fly.toml` `[env]` — `BLACKLIST_ENABLED`, `VERIFY_ENABLED`, `MINER_MODE` do not belong in `.env` and have no effect there
+    - `get_settings()` calls `load_dotenv()` with no args (`override=False`), so a pre-existing shell/process env var silently wins over anything written to `.env` — run Gate 0d's check in the same shell that will later run `sv` or sign extrinsics
     - Success criterion: the file exists with those keys, AND re-running Gate 0d's print from `cricket/turbovision` still emits `44 finney`
     - _Requirements: 2.5, 2.6_
 
@@ -321,7 +326,7 @@ extrinsic), not because the graph was modelled coarsely.
     - Parameters `validator_hotkey`, `signature`, `miner_hotkey`, `nonce` as `Header(...)`. FastAPI maps underscores to hyphens case-insensitively, so these bind the **bare** header names (`Validator-Hotkey`, `Nonce`, …) that `build_signed_headers` sends alongside the `X-` prefixed variants — the same mechanism `verify_request` already relies on
     - Header **presence** is enforced by `Header(...)` itself: a missing header yields FastAPI's 422 before the body is read, which is the cheap rejection clause 2.16 asks for on a 1-vCPU machine
     - Add `MINER_HOTKEY_SS58 = os.environ.get("MINER_HOTKEY_SS58", "")`; reject with 403 when set and `miner_hotkey` differs. **When unset, degrade to presence-only** — an unset value must never lock the validator out (drift D4). The container has neither the Bittensor SDK nor a mounted wallet, so the ss58 comes from `fly.toml` `[env]`; an ss58 is public, not a secret
-    - Add `HEADER_GATE_ENABLED` (default `true`); append the dependency only when `HEADER_GATE_ENABLED and not VERIFY_ENABLED`, since real verification subsumes it
+    - Add `HEADER_GATE_ENABLED` (default `true`); append the dependency only when `HEADER_GATE_ENABLED and not VERIFY_ENABLED`, since real verification subsumes it (`VERIFY_ENABLED` is `"false"` in `fly.toml` `[env]` today and **must stay false** until `fiber` is added to the image in task 19 — otherwise this gate is never registered and the container does not boot)
     - Docstring must state plainly: **noise filter, NOT authentication** — anyone reading this source can forge these headers
     - Import constraint as in 5.1: stdlib and `fastapi` only
     - _Bug_Condition: isBugCondition(X) — challenge requests accepted from any caller with no gating (clause 1.13)_
@@ -394,17 +399,21 @@ extrinsic), not because the graph was modelled coarsely.
     - Point `[build].dockerfile` at `scorevision/miner/private_track/Dockerfile.v3` with a comment naming the parity invariant
     - Drop `PORT = "8000"` (the `CMD` hardcodes `--port 8000`, so it was inert) and `[build.args] DOCKER_BUILDKIT = "1"` (also inert) — drift D7
     - Add `MINER_HOTKEY_SS58 = "<our hotkey ss58>"` to `[env]`
-    - **Omit `BLACKLIST_ENABLED` and `VERIFY_ENABLED` entirely** rather than setting them `false`, so the `security.py` defaults are not overridden by a stale literal (clause 2.17). Effective posture is gate-only until v3.1
+    - **Keep `BLACKLIST_ENABLED = "false"` and `VERIFY_ENABLED = "false"` as explicit literals in `[env]`** — carry them over from the current file verbatim. **Do not omit them.** `security.py:4-5` reads `os.environ.get("BLACKLIST_ENABLED", "true")` and `os.environ.get("VERIFY_ENABLED", "true")`, so **both default to `true` when unset**, not false. The `BLACKLIST_ENABLED` true-path runs `from fiber.miner.dependencies import blacklist_low_stake` inside `get_security_dependencies()`, and `fiber` is not in the `Dockerfile` pip list (confirmed in task 19). Omitting the keys does not degrade to 401s — it stops the container booting at all with `ModuleNotFoundError: No module named 'fiber'` (reproduced against the v2.5 image in task 2), because `server.py` calls `get_security_dependencies()` at import time inside the route decorator, so uvicorn never binds a port
+    - Second failure mode from the same omission: task 6.1 appends the header gate only when `HEADER_GATE_ENABLED and not VERIFY_ENABLED`, so an unset `VERIFY_ENABLED` would also silently un-register the v3 header gate that step 3 exists to build
+    - Blast radius and timing: task 8.1 runs **after** the dedicated IPv4 is paid for and **after** the rate-limited `serve_axon` extrinsic is burned, so this failure would publish a working axon pointing at a crash-looping container — the worst reachable end state. These literals are **not stale, they are load-bearing** (clause 2.17); task 19 owns the eventual move to `VERIFY_ENABLED = "true"` behind proof of signing-message parity. Effective posture is gate-only until then
+    - **Carry over `MINER_MODE = "cricket_delivery"` verbatim** as well. Without it `routes.py:16` falls back to `os.getenv("MINER_MODE", "soccer_action")` and the cricket branch never executes, so the miner would answer cricket challenges through the soccer path. The only `[env]` key task 8.1 may legitimately drop is `PORT` (inert — the `CMD` hardcodes `--port 8000`); **every other `[env]` key is load-bearing and must survive the rewrite**
     - Keep `[[vm]]` unchanged
     - _Bug_Condition: isBugCondition(X) — `unreachable`, clauses 1.10, 1.11, 1.12, 1.13_
     - _Expected_Behavior: plain HTTP on port 8000 is served, not redirected_
-    - _Preservation: 443 keeps serving `.fly.dev` (3.1); warm machine retained (3.5)_
+    - _Preservation: 443 keeps serving `.fly.dev` (3.1); warm machine retained (3.5); `[env]` carried over whole — container still boots (no `fiber` import) and cricket mode retained_
     - _Requirements: 2.12, 2.14, 2.17, 2.19, 3.1, 3.5_
 
   - [ ] 8.2 `fly config validate`
     - Mandatory before deploy (clause 2.15). `auto_stop_machines` and siblings have moved between `[http_service]` and `[[services]]` across fly.toml revisions, and the schema the installed CLI expects is unverified
     - **EXPECTED OUTCOME**: validation clean
     - If it rejects the autostop keys inside `[[services]]`, move them to top level for that CLI version and re-validate — fix rather than deploying and hoping
+    - **A clean parse does not prove the container boots**: `fly config validate` never imports `security.py`, so a missing `BLACKLIST_ENABLED` would validate clean and still crash-loop. After deploy, the `fly logs` check must confirm the startup banner from `log_startup_config()` shows Blacklist and Verify **DISABLED**. A booted container is the actual success criterion, not a clean config parse
     - _Requirements: 2.15_
 
 - [ ] 9. Add the Dockerfile parity guard
@@ -488,13 +497,14 @@ extrinsic), not because the graph was modelled coarsely.
 
 - [ ] 14. **USER ACTION** — publish the axon (step 7, rate limited, one shot)
   - **Why the agent cannot do this**: on-chain serving is rate limited, so a wrong IP costs a wait before retry. Effectively one-shot
-  - Preferred, version-stable path, from the Gate 0b venv:
+  - The wallet is confirmed local at `~/.bittensor/wallets` under WSL Ubuntu-24.04 on this machine. This task must be run from a shell where that wallet is visible (i.e. WSL), not from a bare Windows venv with no wallet — the Gate 0b venv reference (task 1) covers the earlier read-only SDK probes, not this signing step
+  - Preferred, version-stable path, run from WSL:
     ```python
     import bittensor as bt
     from bittensor.core.extrinsics.serving import serve_extrinsic
 
     PUBLIC_IPV4 = "<dedicated fly ipv4, verified reachable in task 13>"
-    wallet = bt.wallet(name="cricket_miner", hotkey="default")
+    wallet = bt.wallet(name="cricket_miner", hotkey="miner2")
     sub = bt.subtensor(network="finney")
     ok = serve_extrinsic(subtensor=sub, wallet=wallet, ip=PUBLIC_IPV4, port=8000,
                          protocol=4, netuid=44,
@@ -503,6 +513,7 @@ extrinsic), not because the graph was modelled coarsely.
     ```
   - Fallback if that import path has moved: `sub.serve_axon(netuid=44, axon=bt.axon(wallet=wallet, ip=PUBLIC_IPV4, port=8000, external_ip=PUBLIC_IPV4, external_port=8000))`
   - `btcli axon set` is **not** used — it does not exist in bittensor-cli 9.x and `MINER.md:21` is unreliable here (clause 2.2)
+  - Before spending the extrinsic, run `btcli wallet list` (or equivalent) and confirm coldkey `cricket_miner` contains hotkey `miner2` with ss58 `5CyQ9buHwqgCS7158ytsX8BQvT7WSEH8gDMWq7tqUV3Fshsa` — a wrong hotkey name can succeed while publishing the axon for the wrong identity, silently wasting the rate-limited call
   - Skip this task entirely if Gate 0c (task 1) already read back a correct IPv4 — Blocker A would already be resolved and the extrinsic would be spent for nothing
   - **Verification is the read-back, not the extrinsic's return value**: `print(sub.neuron_for_uid(207, netuid=44).axon_info)` must show `ip=<dedicated v4>`, `port=8000`, `ip_type=4`. A `True` return with `ip=0.0.0.0` on read-back means not published — treat success as provisional until the read-back agrees
   - Reversal: `reset_axon` republishes a placeholder (`ip 0, port 1, protocol 4`), **subject to the same rate limit**. Plan on not needing it
