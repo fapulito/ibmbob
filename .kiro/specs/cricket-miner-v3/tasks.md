@@ -325,9 +325,9 @@ extrinsic), not because the graph was modelled coarsely.
     - **Result**: 9 tests in `tests/private/test_health_endpoint.py`, all passing. Requests are driven directly against the ASGI app rather than via `TestClient`, so the "no headers present" case is literally zero headers. The predictor stub raises on any call, with a control test proving the stub is genuinely wired in via `POST /challenge`. Route exemption is asserted structurally (`dependencies == []`, `dependant.header_params == []`), which is what makes the task 6 header-gate exemption true by construction
     - _Requirements: 2.18_
 
-- [ ] 6. Add the header gate to `security.py` (step 3)
+- [x] 6. Add the header gate to `security.py` (step 3)
 
-  - [ ] 6.1 Implement `require_validator_headers` and wire it into `get_security_dependencies()`
+  - [x] 6.1 Implement `require_validator_headers` and wire it into `get_security_dependencies()`
     - Parameters `validator_hotkey`, `signature`, `miner_hotkey`, `nonce` as `Header(...)`. FastAPI maps underscores to hyphens case-insensitively, so these bind the **bare** header names (`Validator-Hotkey`, `Nonce`, …) that `build_signed_headers` sends alongside the `X-` prefixed variants — the same mechanism `verify_request` already relies on
     - Header **presence** is enforced by `Header(...)` itself: a missing header yields FastAPI's 422 before the body is read, which is the cheap rejection clause 2.16 asks for on a 1-vCPU machine
     - Add `MINER_HOTKEY_SS58 = os.environ.get("MINER_HOTKEY_SS58", "")`; reject with 403 when set and `miner_hotkey` differs. **When unset, degrade to presence-only** — an unset value must never lock the validator out (drift D4). The container has neither the Bittensor SDK nor a mounted wallet, so the ss58 comes from `fly.toml` `[env]`; an ss58 is public, not a secret
@@ -337,14 +337,16 @@ extrinsic), not because the graph was modelled coarsely.
     - _Bug_Condition: isBugCondition(X) — challenge requests accepted from any caller with no gating (clause 1.13)_
     - _Expected_Behavior: complete-and-matching header set admitted; missing or foreign rejected before the predictor runs_
     - _Preservation: `POST /challenge` keeps the same path and body contract — the gate adds a precondition only (clause 3.9)_
+    - **Result**: `require_validator_headers` added to `security.py` with `validator_hotkey`/`signature`/`miner_hotkey`/`nonce` as `Header(...)`, binding the **bare** hyphenated names (`Validator-Hotkey`, `Signature`, `Miner-Hotkey`, `Nonce`) via FastAPI's underscore→hyphen, case-insensitive mapping. Appended in `get_security_dependencies()` only when `HEADER_GATE_ENABLED and not VERIFY_ENABLED`. Returns 403 on a foreign `miner_hotkey` when `MINER_HOTKEY_SS58` is set, and **degrades to presence-only when unset** (drift D4) — verified in-container: with the var unset a foreign hotkey is admitted, while presence of all four headers is still required. A missing header yields 422 **before the body is read**, verified observationally rather than by assumption: an ASGI `receive()` counter shows `body_reads == 0` on the 422 path, including for a 2 MiB body. `server.py` needed no change — the gate wires in through `get_security_dependencies()`, which the route decorator already calls
     - _Requirements: 2.16, 2.17, 3.9_
 
-  - [ ] 6.2 Extend `log_startup_config()` to report gate status
+  - [x] 6.2 Extend `log_startup_config()` to report gate status
     - `logging.py` already imports `BLACKLIST_ENABLED`/`VERIFY_ENABLED` from `security`; add `HEADER_GATE_ENABLED` and whether `MINER_HOTKEY_SS58` is set, so `fly logs` shows the effective security posture at startup (drift D9)
     - Do not log the ss58 value if it is treated as noisy — logging set/unset is sufficient
+    - **Result**: `log_startup_config()` reports the **effective** posture, not the raw switch — `Header gate: ACTIVE`, `INACTIVE - subsumed by Verify`, or `DISABLED`. This distinction is load-bearing: `HEADER_GATE_ENABLED=true` together with `VERIFY_ENABLED=true` registers **nothing**, so printing `ENABLED` there would be precisely the log-says-one-thing/reality-says-another mismatch that drift D9 exists to prevent. `MINER_HOTKEY_SS58` is logged as `SET`/`UNSET` only, never the value
     - _Requirements: 2.17_
 
-  - [ ] 6.3 Unit tests for the header gate
+  - [x] 6.3 Unit tests for the header gate
     - All four headers present with matching `miner_hotkey` → pass
     - Each header missing in turn → 422 before the body is read
     - Foreign `miner_hotkey` → 403
@@ -353,13 +355,17 @@ extrinsic), not because the graph was modelled coarsely.
     - `get_security_dependencies()` returns the gate when `VERIFY_ENABLED` is false and omits it when true
     - `routes.py` cricket branch still returns `PredictionPayload(type="cricket_delivery", item=...)`
     - Location: `tests/private/test_private_security.py` (extend) or a sibling file
+    - **Result**: 59 tests in `tests/private/test_header_gate.py` — a **sibling** of `test_private_security.py` rather than an extension of it, because that file imports `fiber` / `bittensor_wallet` at module scope and therefore cannot run in the lean local environment at all. Covers all four headers present and matching (pass), each header missing in turn (422), foreign `miner_hotkey` (403), `MINER_HOTKEY_SS58` unset (presence-only, validator not locked out), bare-name binding, `get_security_dependencies()` registering the gate iff `VERIFY_ENABLED` is false, and the `routes.py` cricket branch still returning `PredictionPayload(type="cricket_delivery", item=...)`
     - _Requirements: 2.16, 2.17, 2.18, 3.2, 3.9_
 
-  - [ ] 6.4 **Property 4: Header Gate** - Admits Exactly The Validator's Header Set
+  - [x] 6.4 **Property 4: Header Gate** - Admits Exactly The Validator's Header Set
     - Property-based test over arbitrary header subsets and `miner_hotkey` values: the gate admits exactly the complete-and-matching set and rejects everything else **before the predictor runs**
     - Also generate malformed and oversized bodies and assert rejection happens on headers before body parsing, so a 1-vCPU machine cannot be made to do work by an unauthenticated caller
     - `hypothesis` is **not** currently a dependency. Either add it to `pyproject.toml` dev deps, or — since four boolean headers give a 16-element domain — implement as exhaustive `pytest.mark.parametrize` over all subsets, which is a complete "for all" over that domain. Pick one and note the choice
+    - **Result**: **exhaustive `pytest.mark.parametrize` chosen; `hypothesis` was NOT added.** Property 4 enumerates all 2^4 header subsets × {ours, foreign} = **32 cases**, which over a 4-boolean domain is strictly stronger than sampling — it is a literal "for all", not a probabilistic one, so a new dependency would buy nothing. Oversized/malformed bodies are covered by the `receive()`-counter tests from 6.1 proving rejection happens on headers before any body read. Re-verified inside `cricket-miner:v3` under the image's own pinned `fastapi 0.104.1` / `pydantic 2.5.2`: the 422 response shape matches local `fastapi 0.141` exactly apart from a cosmetic pydantic error-`url` key, so the local suite is a faithful proxy for container behaviour
     - _Requirements: 2.16, 2.17, 2.18, 3.9_
+
+  - **Task 6 side effect — `tests/private/test_health_endpoint.py`**: two assertions were legitimately updated, not weakened. Task 6 makes `/challenge`'s dependency list **non-empty** whenever `VERIFY_ENABLED` is false, so the pre-task-6 recording of `dependencies == []` was describing a state that no longer exists. `/health`'s exemption is unaffected and is still asserted structurally (`dependencies == []`, `dependant.header_params == []`) on the `/health` route itself, which is what keeps the 5.2 guarantee true by construction rather than by convention
 
 - [ ] 7. Add `--dockerfile` to `deploy-pt-miner` (step 3b — drift D1 resolution)
 
