@@ -257,11 +257,12 @@ extrinsic), not because the graph was modelled coarsely.
   - Mark complete when the tests are written, run, and passing against unfixed code
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.7, 3.8, 3.9, 3.11_
 
-- [ ] 3. Pre-flight user gates (USER ACTION)
+- [x] 3. Pre-flight user gates (USER ACTION)
 
-  - [ ] 3.1 **USER ACTION** — create `cricket/turbovision/.env`
+  - [x] 3.1 **USER ACTION** — create `cricket/turbovision/.env`
     - **Why the agent cannot do this**: workspace rules forbid the agent from creating or editing `.env` or any environment variable file
-    - Required content (design Gate 0e): `GITHUB_USERNAME`, `GITHUB_TOKEN` (GHCR PAT with `write:packages`), `GHCR_REPO=pt-solution`, `BITTENSOR_WALLET_COLD=cricket_miner`, `BITTENSOR_WALLET_HOT=miner2`, `SCOREVISION_NETUID=44`, `BITTENSOR_SUBTENSOR_ENDPOINT=finney`, `BITTENSOR_SUBTENSOR_FALLBACK=wss://entrypoint-finney.opentensor.ai:443`
+    - Required content (design Gate 0e): `GITHUB_USERNAME=fapulito`, `GITHUB_TOKEN` (GHCR PAT with `write:packages`), `GHCR_REPO=cricket-miner`, `BITTENSOR_WALLET_COLD=cricket_miner`, `BITTENSOR_WALLET_HOT=miner2`, `SCOREVISION_NETUID=44`, `BITTENSOR_SUBTENSOR_ENDPOINT=finney`, `BITTENSOR_SUBTENSOR_FALLBACK=wss://entrypoint-finney.opentensor.ai:443`
+    - **`GHCR_REPO` is `cricket-miner`, not `pt-solution`.** `pt-solution` is only the code default — `os.environ.get("GHCR_REPO", "pt-solution")` in `scorevision/cli/private_track_miner.py`. The actual package for this deployment is `cricket-miner` (`https://github.com/users/fapulito/packages/container/package/cricket-miner`), and the image is composed as `DockerImage(repository=f"{GHCR_REGISTRY}/{username}/{repo_name}", tag=tag)` from `GITHUB_USERNAME` and `GHCR_REPO` — so leaving the default would build and push `ghcr.io/fapulito/pt-solution`, creating a second, empty package and ignoring the existing one. The same string lands in the on-chain commitment as `image_repo`, which `scorevision/utils/docker_hub.py:check_image_accessible` validates with a live registry `HEAD` against `https://ghcr.io/v2/{image_repo}/manifests/{tag}`, and `scorevision/validator/central/private_track/registry.py` drops any miner whose `image_repo` is empty. An incorrect value here silently fails the spot-check later (tasks 15 and 16)
     - `auto_register.sh` (`WALLET_NAME="cricket_miner"`, `HOTKEY_NAME="miner2"`) is the authoritative source for these wallet names — its success check greps the metagraph for hotkey `5CyQ9buHwqgCS7158ytsX8BQvT7WSEH8gDMWq7tqUV3Fshsa` (UID 207). Unlike the netuid/endpoint keys, `settings.py`'s `"default"` fallback for `BITTENSOR_WALLET_COLD`/`BITTENSOR_WALLET_HOT` is WRONG for this deployment, so these two keys may not be safely omitted
     - The wallet itself lives at `~/.bittensor/wallets` under WSL Ubuntu-24.04 on this machine (confirmed local, not remote). Any command that signs on-chain, including task 14, must run from a process that can see that path
     - **Do NOT copy `env.example` verbatim** — it ships `SCOREVISION_NETUID=423` and `BITTENSOR_SUBTENSOR_ENDPOINT=test`, which would land the commitment on testnet 423: structurally perfect, permanently invisible, and indistinguishable from success (drift D3). The netuid/endpoint/fallback lines above are deliberate explicit pins against exactly that
@@ -272,7 +273,7 @@ extrinsic), not because the graph was modelled coarsely.
     - Success criterion: the file exists with those keys, AND re-running Gate 0d's print from `cricket/turbovision` still emits `44 finney`
     - _Requirements: 2.5, 2.6_
 
-  - [ ] 3.2 **USER ACTION** — accept the dedicated IPv4 cost
+  - [x] 3.2 **USER ACTION** — accept the dedicated IPv4 cost
     - **Why the agent cannot do this**: it is a spend decision
     - ~$2/month for a dedicated Fly IPv4, on top of ~$5–8/month for the warm 1 GB shared-CPU machine
     - Not optional: a shared IP cannot route a request carrying neither `Host` nor SNI, so there is no free path to fixing Blocker C
@@ -280,9 +281,9 @@ extrinsic), not because the graph was modelled coarsely.
     - Success criterion: explicit acceptance recorded
     - _Requirements: 2.13_
 
-- [ ] 4. Build `Dockerfile.v3` (step 1 — new file, live image untouched)
+- [x] 4. Build `Dockerfile.v3` (step 1 — new file, live image untouched)
 
-  - [ ] 4.1 Create `scorevision/miner/private_track/Dockerfile.v3`
+  - [x] 4.1 Create `scorevision/miner/private_track/Dockerfile.v3`
     - **NEVER overwrite the v2.5 `Dockerfile`** — leaving it in place makes rollback a one-line `fly.toml` edit rather than a file restore
     - Drop `libgl1` (`opencv-python-headless` exists to avoid GL/GUI linkage; `libgl1` drags in mesa, libdrm, X libraries never loaded)
     - Drop `cryptography==41.0.7` (imported by nothing on the miner path; also removes `cffi`/`pycparser`)
@@ -292,32 +293,36 @@ extrinsic), not because the graph was modelled coarsely.
     - _Bug_Condition: isBugCondition(X) — image bloat inflates the spot-check pull_
     - _Requirements: 2.19_
 
-  - [ ] 4.2 Gate the image on `import cv2, numpy` inside the built container
+  - [x] 4.2 Gate the image on `import cv2, numpy` inside the built container
     - Run `docker build -f scorevision/miner/private_track/Dockerfile.v3 -t cricket-miner:v3 .` then `docker run --rm cricket-miner:v3 python -c "import cv2, numpy"`
     - **EXPECTED OUTCOME**: exits 0
     - If a shared object is missing, add back **only the specific library named in the error**. Do NOT reinstate `libgl1` reflexively
     - _Requirements: 2.20, 3.4_
 
-  - [ ] 4.3 Compare image size against v2.5
+  - [x] 4.3 Compare image size against v2.5
     - `docker images` on both tags; expect roughly 70–90 MB smaller
     - Note: the estimate is measured against v2.5, not against a known floor — no `v2.3` Dockerfile exists in the repo (design Open Question 3)
+    - **Result**: the spec's 70–90 MB estimate is accurate for **compressed content size** — 208 MB → 128 MB, delta 79.8 MB — which is the quantity the spot-check pull actually transfers, but it **understates the unpacked disk saving**: 844 MB → 523 MB, delta 321 MB. The apt layer fell from 216 MB to 4.82 MB once `libgl1`'s mesa/libdrm/X closure was removed; the pip layer fell 270 MB → 240 MB from dropping `cryptography`/`cffi`/`pycparser` plus `PYTHONDONTWRITEBYTECODE=1` suppressing `.pyc` files at build time
+    - Built tags: `cricket-miner:v3` and `cricket-miner-v25-baseline:probe`, built locally via WSL Docker 29.1.3
     - _Requirements: 2.19_
 
-- [ ] 5. Add `/health` to `server.py` (step 2)
+- [x] 5. Add `/health` to `server.py` (step 2)
 
-  - [ ] 5.1 Register the `/health` route
+  - [x] 5.1 Register the `/health` route
     - Returns `200` with `{"status": "ok", "mode": os.getenv("MINER_MODE", "soccer_action")}` without invoking the predictor
     - Registered **separately** from `/challenge`, so it inherits neither `get_security_dependencies()` nor the new header gate — this is what makes `curl http://<v4>:8000/health` a clean reachability probe isolating network reachability from predictor behaviour, and stops the existing `/challenge` 500 looking like a genuine failure in `fly logs`
     - **Import constraint**: the image copies only `miner/private_track/*.py` plus `utils/logging.py` and `utils/schemas.py`, so new code may import stdlib and `fastapi` only
     - _Bug_Condition: isBugCondition(X) — `GET /health` returns 404 (clause 1.14), and the `/challenge` fallback returns 500 (clause 1.15)_
     - _Expected_Behavior: `GET /health` returns 200 without invoking the predictor_
+    - **Result**: implemented as a separate `@app.get("/health")` route in `server.py` returning `{"status": "ok", "mode": os.getenv("MINER_MODE", "soccer_action")}`, with `MINER_MODE` read **per request** rather than at import, so the probe reflects the live `fly.toml` `[env]` value rather than import-time state. Verified inside the built `cricket-miner:v3` container under the image's own pinned `fastapi 0.104.1` / `pydantic 2.5.2`: `HEALTH 200 {"mode": "cricket_delivery", "status": "ok"}`, `PATHS ['/challenge', '/health']`, `PREDICTOR_CALLED False`
     - _Requirements: 2.18_
 
-  - [ ] 5.2 Unit tests for `/health`
+  - [x] 5.2 Unit tests for `/health`
     - Returns 200
     - Does **not** invoke the predictor — assert via a patched predictor that raises if called
     - Passes with no headers present, confirming exemption from the security dependencies and the header gate
     - Location: `tests/private/`
+    - **Result**: 9 tests in `tests/private/test_health_endpoint.py`, all passing. Requests are driven directly against the ASGI app rather than via `TestClient`, so the "no headers present" case is literally zero headers. The predictor stub raises on any call, with a control test proving the stub is genuinely wired in via `POST /challenge`. Route exemption is asserted structurally (`dependencies == []`, `dependant.header_params == []`), which is what makes the task 6 header-gate exemption true by construction
     - _Requirements: 2.18_
 
 - [ ] 6. Add the header gate to `security.py` (step 3)
@@ -543,7 +548,8 @@ extrinsic), not because the graph was modelled coarsely.
 
 - [ ] 16. **USER ACTION** — grant `DataAndMike` Read on the GHCR package (step 9)
   - **Why the agent cannot do this**: GitHub web UI
-  - `https://github.com/users/<GITHUB_USERNAME>/packages/container/pt-solution/settings` → Manage access → Invite teams or people → add `DataAndMike` with **Read**
+  - `https://github.com/users/fapulito/packages/container/cricket-miner/settings` → Manage access → Invite teams or people → add `DataAndMike` with **Read**
+  - The package is `cricket-miner` (matching `GHCR_REPO` in task 3.1), **not** the code default `pt-solution` — granting Read on the wrong package leaves the real image unpullable
   - Without this the validator cannot pull the image for spot-check. The miner then passes challenges and is still scored 0, with blacklisting risk
   - Revocable at any time
   - Success criterion: the user reports the grant visible in package settings
