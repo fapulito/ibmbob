@@ -39,3 +39,6 @@ cricket/indexprivate.json
 *.gif
 *.webp
 *.bmp
+
+# --- throwaway venvs (e.g. .venv-bt) ---
+.venv*

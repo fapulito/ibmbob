@@ -1,0 +1,17 @@
+@fapulito ➜ ~/.bittensor/wallets/cricket_miner $ python3 publish_axon.py
+serve_axon: ExtrinsicResponse:
+        success: True
+        message: Success
+        extrinsic_function: serve_extrinsic
+        extrinsic: {'account_id': '0x28306557422e35dc4b15b947c6742b134abd847c2af105073ed53ec431035f31', 'signature': {'Sr25519': '0x2e28eaa2fb8b4b10fe0c9cbae38679a954db40a1ff073825b8a9ce06c1287a6d25a6c96f781cb5ad9325f133ca0060e31ac3636312ae1fd2a7bc77581a828388'}, 'call_function': 'serve_axon', 'call_module': 'SubtensorModule', 'call_args': {'netuid': 44, 'version': 10003000, 'ip': 3423227789, 'port': 8000, 'ip_type': 4, 'protocol': 4, 'placeholder1': 0, 'placeholder2': 0}, 'nonce': 1, 'era': '00', 'tip': 0, 'asset_id': {'tip': 0, 'asset_id': None}, 'mode': 'Disabled', 'signature_version': 1, 'address': '0x28306557422e35dc4b15b947c6742b134abd847c2af105073ed53ec431035f31', 'call': {'call_function': 'serve_axon', 'call_module': 'SubtensorModule', 'call_args': {'netuid': 44, 'version': 10003000, 'ip': 3423227789, 'port': 8000, 'ip_type': 4, 'protocol': 4, 'placeholder1': 0, 'placeholder2': 0}}}
+        extrinsic_fee: τ0.000000000
+        extrinsic_receipt: ExtrinsicReceipt<hash:0xb469a7636fad65340e53563471b6cdd93b41875b2d2576c955893bfa3c1e5396>
+
+        mev_extrinsic: None
+        transaction_tao_fee: None
+        transaction_alpha_fee: None
+        error: None
+        data: None
+
+@fapulito ➜ ~/.bittensor/wallets/cricket_miner $ python3 readback.py
+AxonInfo( /ipv4/204.10.79.141:8000, 5CyQ9buHwqgCS7158ytsX8BQvT7WSEH8gDMWq7tqUV3Fshsa, 5F2TqN39BBGYjcmMQuN3pWaGWq2Ymf3iy5WsLhfV6YtXoUkF, 10003000 )
