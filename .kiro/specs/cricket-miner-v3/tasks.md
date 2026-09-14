@@ -368,15 +368,16 @@ extrinsic), not because the graph was modelled coarsely.
 
   - **Task 6 side effect — `tests/private/test_health_endpoint.py`**: two assertions were legitimately updated, not weakened. Task 6 makes `/challenge`'s dependency list **non-empty** whenever `VERIFY_ENABLED` is false, so the pre-task-6 recording of `dependencies == []` was describing a state that no longer exists. `/health`'s exemption is unaffected and is still asserted structurally (`dependencies == []`, `dependant.header_params == []`) on the `/health` route itself, which is what keeps the 5.2 guarantee true by construction rather than by convention
 
-- [ ] 7. Add `--dockerfile` to `deploy-pt-miner` (step 3b — drift D1 resolution)
+- [x] 7. Add `--dockerfile` to `deploy-pt-miner` (step 3b — drift D1 resolution)
 
-  - [ ] 7.1 Re-run a repo-wide search for callers of `build_miner_image`
+  - [x] 7.1 Re-run a repo-wide search for callers of `build_miner_image`
     - **Do this before editing** — this is shared CLI code other agents may be touching
     - One caller found at design time: `deploy_miner` at `private_track_miner.py:217`. Confirm the count and confirm each is unaffected
     - If a new caller exists, verify the additive default keeps it building the pre-change path
+    - **Result**: repo-wide caller search for `build_miner_image` re-run via `git --no-pager grep -n "build_miner_image"` plus a recursive `Select-String` pass over untracked files too. Confirmed exactly one runtime caller — `deploy_miner` at `private_track_miner.py:217` (later renumbered to ~245 after the 7.2 edits) — an unchanged count from design time; no new callers found
     - _Requirements: 3.11_
 
-  - [ ] 7.2 Thread `--dockerfile` from `scorevision/__init__.py` through `deploy_miner` into `build_miner_image`
+  - [x] 7.2 Thread `--dockerfile` from `scorevision/__init__.py` through `deploy_miner` into `build_miner_image`
     - **Strictly additive**: no signature broken, no default behaviour changed
     - `build_miner_image(image, dockerfile: str | None = None)`; `None` resolves to the existing hardcoded `repo_root / "scorevision/miner/private_track/Dockerfile"` — this is what makes clause 3.11 hold
     - Relative values resolve against `repo_root`, **not CWD**, because `build_image` already receives `repo_root` as the build context; resolving elsewhere would let the two disagree depending on the caller's working directory
@@ -388,9 +389,10 @@ extrinsic), not because the graph was modelled coarsely.
     - _Bug_Condition: without this option Fly runs `Dockerfile.v3` while GHCR holds the v2.5 image — the spot-check divergence that scores 0 (drift D1)_
     - _Expected_Behavior: `fly.toml` and the deploy command build the same file_
     - _Preservation: omitting `--dockerfile` builds exactly the pre-change path (clause 3.11)_
+    - **Result**: `build_miner_image(image: DockerImage, dockerfile: str | None = None)` added to `scorevision/cli/private_track_miner.py`. `None` resolves to the pre-change hardcoded path. Relative values resolve against `repo_root` (from `Path(__file__).resolve().parents[2]`), never CWD — proven with a decoy Dockerfile planted in the CWD that is correctly NOT found except when CWD is the repo root itself (where it legitimately coincides). Absolute values used as given. A resolved path that doesn't exist raises `ConfigError`, never falls back silently. `scorevision/__init__.py` gained a `--dockerfile` click option defaulting to `None`, naming the default path in `--help`. `deploy_miner` gained a trailing keyword parameter and forwards it via `build_miner_image(image, dockerfile=dockerfile)`. `MINER.md` got one additive row documenting the option, since it already tabulated the other `deploy-pt-miner` options
     - _Requirements: 2.6, 3.11_
 
-  - [ ] 7.3 **Property 5: Preservation** - `--dockerfile` Is Additive And Backward Compatible
+  - [x] 7.3 **Property 5: Preservation** - `--dockerfile` Is Additive And Backward Compatible
     - `build_miner_image(image)` with the option omitted builds `repo_root / "scorevision/miner/private_track/Dockerfile"` — assert on the path handed to a patched `build_image`
     - `build_miner_image(image, dockerfile="scorevision/miner/private_track/Dockerfile.v3")` builds that file, not the default
     - `build_miner_image(image, dockerfile="does/not/exist")` raises `ConfigError` and **never** calls `build_image`
@@ -398,11 +400,12 @@ extrinsic), not because the graph was modelled coarsely.
     - An absolute value is used as given
     - `deploy_miner` forwards `dockerfile`, and the old five-positional-argument call still works
     - Location: `tests/cli/`
+    - **Result**: Property 5 in new file `tests/cli/test_pt_miner_dockerfile_option.py`, 37 tests, exhaustive `pytest.mark.parametrize` chosen over `hypothesis` (consistent with 6.4's choice) since the domain (path shapes × working directories) is small and finite. The real `build_miner_image` source is extracted via `ast.get_source_segment` and executed in a controlled namespace with the real `pathlib.Path`/`ConfigError`/`DockerImage`/real filesystem, only `build_image` and `console` stubbed — never importing `scorevision.cli.private_track_miner` directly (that module chain needs bittensor/torch). Covers: omitted option builds the pre-change default path across 4 CWDs; explicit `None` identical to omitted; relative values resolve against repo_root across 4 CWDs × 2 paths; absolute values used as-is including out-of-tree; 5 missing-path variants raise `ConfigError` with zero `build_image` calls; a CWD-only decoy still raises; a failed build still raises `DockerBuildError`; the resolved path is echoed; signature and forwarding call are additive. Test run confirmed: `python -m pytest --noconftest tests/cli/test_pt_miner_dockerfile_baseline.py tests/cli/test_pt_miner_dockerfile_option.py -q` → 47 passed. Files touched: `scorevision/__init__.py`, `scorevision/cli/private_track_miner.py`, `scorevision/miner/private_track/MINER.md`, `tests/cli/test_pt_miner_dockerfile_baseline.py` (5 baseline assertions updated to record the post-change state, none weakened — literal moved into an `if dockerfile is None:` branch, `build_image` arg list updated, signature-additive check, forwarding-call check, and the fly.toml-agreement test rewritten to check value shape since task 8 concurrently repointed fly.toml to Dockerfile.v3), plus the new `tests/cli/test_pt_miner_dockerfile_option.py`. Committed as `efcb8e6`
     - _Requirements: 3.11_
 
-- [ ] 8. Migrate `fly.toml` to `[[services]]` (step 4)
+- [x] 8. Migrate `fly.toml` to `[[services]]` (step 4)
 
-  - [ ] 8.1 Rewrite the service block
+  - [x] 8.1 Rewrite the service block
     - Replace `[http_service]` with `[[services]]` at `internal_port = 8000`, `protocol = "tcp"`
     - Ports: **8000** `handlers = ["http"]` (what the validator actually uses; correct on a dedicated IP where Fly routes by IP alone — raw TCP passthrough also works, but the HTTP handler preserves `X-Forwarded-For` for logging), **443** `["tls", "http"]` and **80** `["http"]` so `https://cricket-delivery-miner.fly.dev` keeps working for manual testing (clause 3.1)
     - **Drop `force_https`** — do not move it. Retaining it would 301 the validator's plain-HTTP request on 8000 (clause 2.14)
@@ -419,13 +422,15 @@ extrinsic), not because the graph was modelled coarsely.
     - _Bug_Condition: isBugCondition(X) — `unreachable`, clauses 1.10, 1.11, 1.12, 1.13_
     - _Expected_Behavior: plain HTTP on port 8000 is served, not redirected_
     - _Preservation: 443 keeps serving `.fly.dev` (3.1); warm machine retained (3.5); `[env]` carried over whole — container still boots (no `fiber` import) and cricket mode retained_
+    - **Result**: `fly.toml` rewritten. `[http_service]` replaced by `[[services]]` at `internal_port=8000, protocol="tcp"`. Three `[[services.ports]]` blocks: 8000 with `handlers=["http"]` (what the validator uses), 443 with `["tls","http"]`, 80 with `["http"]`, so `.fly.dev` keeps working. `force_https` dropped entirely (not moved). `auto_stop_machines=false`, `auto_start_machines=true`, `min_machines_running=1`, `processes=["app"]` all carried over verbatim into the service block. `[[services.http_checks]]` added against `/health` (30s/5s/20s/get). `[build].dockerfile` repointed to `scorevision/miner/private_track/Dockerfile.v3` with a parity-invariant comment. `PORT="8000"` and `[build.args] DOCKER_BUILDKIT="1"` dropped as inert. `[env]` keeps `MINER_MODE="cricket_delivery"`, adds `MINER_HOTKEY_SS58="5CyQ9buHwqgCS7158ytsX8BQvT7WSEH8gDMWq7tqUV3Fshsa"`, and keeps `BLACKLIST_ENABLED="false"`/`VERIFY_ENABLED="false"` as explicit literals per the corrected task text (design.md still has the old, wrong "omit them" guidance — flagged as a live contradiction, tasks.md's text was followed). `[[vm]]` unchanged
     - _Requirements: 2.12, 2.14, 2.17, 2.19, 3.1, 3.5_
 
-  - [ ] 8.2 `fly config validate`
+  - [x] 8.2 `fly config validate`
     - Mandatory before deploy (clause 2.15). `auto_stop_machines` and siblings have moved between `[http_service]` and `[[services]]` across fly.toml revisions, and the schema the installed CLI expects is unverified
     - **EXPECTED OUTCOME**: validation clean
     - If it rejects the autostop keys inside `[[services]]`, move them to top level for that CLI version and re-validate — fix rather than deploying and hoping
     - **A clean parse does not prove the container boots**: `fly config validate` never imports `security.py`, so a missing `BLACKLIST_ENABLED` would validate clean and still crash-loop. After deploy, the `fly logs` check must confirm the startup banner from `log_startup_config()` shows Blacklist and Verify **DISABLED**. A booted container is the actual success criterion, not a clean config parse
+    - **Result**: `fly config validate` → `✓ Configuration is valid`, exit 0, on `fly.exe v0.4.102 windows/amd64`. No autostop-key relocation was needed — this CLI version accepts them inside `[[services]]` directly (answers design Open Question 6). Cross-checked with `fly config show --local` to confirm the CLI actually retained every key rather than silently discarding unknowns. Preservation tests in `tests/private/test_v25_baseline_deployment.py` updated (6 assertions legitimately broke and were rewritten to record the post-migration state, not weakened): service-block migration confirmed structurally, the 5 carried-over v2.5 settings checked against the recorded `V25_HTTP_SERVICE` values (a transfer check, not a fresh literal), `force_https` asserted absent at both levels, port/handler map asserted exactly, health-check dict asserted exactly, dockerfile parity asserted, and a NEW equality (not containment) test added pinning every `[env]` key against `V25_BOOT_REQUIRED_ENV` and the recorded chain hotkey — this is the guard against the design.md trap. Files touched: `fly.toml`, `tests/private/test_v25_baseline_deployment.py`. Committed as `0ce1078`
     - _Requirements: 2.15_
 
 - [x] 9. Add the Dockerfile parity guard
@@ -465,7 +470,7 @@ extrinsic), not because the graph was modelled coarsely.
     - **Result**: `pytest` from `cricket/turbovision` fails at collection (pre-existing environment gap: `scorevision/__init__.py` imports the CLI, which needs `bittensor`/`torch`/`fiber`, none installed locally; unrelated to this task). Fallback via `--noconftest` across `tests/private/` and `tests/cli/`: 221 passed, 10 skipped, 0 failed (the 10 skips are opt-in Docker/live/chain probes)
     - _Requirements: 3.2, 3.8, 3.9, 3.11_
 
-- [ ] 11. **CHECKPOINT** — everything free and local passes before any spend
+- [x] 11. **CHECKPOINT** — everything free and local passes before any spend
   - Confirm every item below is green. Nothing after this task is free or fully reversible
     - `Dockerfile.v3` builds; `import cv2, numpy` succeeds inside the container; size ~70–90 MB smaller than v2.5
     - `/health` returns 200 locally without invoking the predictor
@@ -477,9 +482,10 @@ extrinsic), not because the graph was modelled coarsely.
     - Property 3 prediction equivalence passes
     - Gates 0a–0f all satisfied, including the user-created `.env` and the accepted cost
   - Ask the user before proceeding. If anything above is red, stop here
+  - **Result**: read-only checkpoint pass confirmed every item green: `Dockerfile.v3` builds, `import cv2, numpy` → 4.8.1/1.26.2 inside the container, size delta 79.8MB compressed (within the 70-90MB estimate); `/health` → 9/9 tests passed; header gate + Property 4 → 59/59 passed; `--dockerfile` + Property 5 + caller search → 47/47 passed, one caller confirmed; Dockerfile parity guard → 5/5 passed; `fly config validate` → clean; `get_settings()` → confirmed `44 finney`; Property 3 prediction equivalence → 6 analyser-level tests passed plus, on re-verification, all 5 opt-in Docker end-to-end tests passed (an initial run appeared to time out due to a transient shell/subprocess issue unrelated to the code, re-run from a clean shell confirmed 3+2 passing); Gates 0a-0f confirmed via task 1's Gate 0a/0c Result bullet (added retroactively to close a documentation gap this checkpoint surfaced), `.env` presence confirmed, task 3.2 cost acceptance recorded. Explicit GO given to proceed to task 12
   - _Requirements: 2.15, 2.19, 2.20, 3.4, 3.11_
 
-- [ ] 12. **USER ACTION** — allocate a dedicated IPv4 and deploy (step 5)
+- [x] 12. **USER ACTION** — allocate a dedicated IPv4 and deploy (step 5)
   - **Why the agent cannot do this**: paid infrastructure change
   - From `cricket/turbovision`:
     ```bash
@@ -493,9 +499,10 @@ extrinsic), not because the graph was modelled coarsely.
   - The existing IPv6 (`2a09:8280:1::18b:d679:0`) is **not** a fallback: `miners.py:27` builds `f"http://{miner.ip}:{miner.port}/challenge"` with no bracketing, so a bare IPv6 host produces a malformed URL. IPv4-only is a hard exclusion, not a preference (clause 2.4)
   - Success criterion: the user reports a **dedicated** v4 in `fly ips list` and a successful deploy
   - Reversible: the IP can be released, though releasing it re-breaks Blocker C
+  - **Result**: user confirmed task complete. Dedicated IPv4 `204.10.79.141` allocated on app `cricket-delivery-miner` (global anycast, ~$2/mo), confirmed NOT shared. `fly deploy -a cricket-delivery-miner` run by the user, deploying the image built from `Dockerfile.v3` per the now-repointed `fly.toml`. Success criterion (dedicated v4 present, deploy succeeded) reported met by the user
   - _Requirements: 2.4, 2.13, 2.15_
 
-- [ ] 13. **GATE** — reachability curl on the raw dedicated IPv4 (step 6)
+- [x] 13. **GATE** — reachability curl on the raw dedicated IPv4 (step 6)
   - This gate exists solely to protect step 7's rate-limited extrinsic: the IP is proven reachable **before** it is committed on chain
   - ```bash
     V4=$(fly ips list -a cricket-delivery-miner | awk '/v4/{print $2}')
@@ -509,6 +516,7 @@ extrinsic), not because the graph was modelled coarsely.
     ```
   - Signals: `000` means no response and **Blocker C is not fixed**; any status code means the connection reached the app; `200` on `/health` is the pass; a **`500`** from the second call is **SUCCESS** — it proves the request arrived, passed the header gate, was parsed, and failed only on the fake video URL; `422` with no headers confirms the header gate is working (a valid but less informative reachability signal)
   - **DO NOT PROCEED to task 14 until `/health` returns 200 on the raw v4**
+  - **Result**: `curl.exe -s -o NUL -w "%{http_code}" --max-time 20 http://204.10.79.141:8000/health` → `200`, body `{"status":"ok","mode":"cricket_delivery"}`. `curl.exe -s -X POST http://204.10.79.141:8000/challenge` with `Content-Type: application/json`, `Validator-Hotkey: 5xxx`, `Signature: 0xdeadbeef`, `Miner-Hotkey: 5CyQ9buHwqgCS7158ytsX8BQvT7WSEH8gDMWq7tqUV3Fshsa`, `Nonce: 1`, body `{"challenge_id":"reach-1","video_url":"https://example.com/x.mp4"}` → `500`, which per the gate's own success criteria proves the request arrived, passed the header gate, was parsed, and failed only on the fake video URL. Both signals pass. Gate satisfied: `/health` returned 200 on the raw dedicated v4 before task 14 is touched
   - _Requirements: 2.11, 2.12, 2.14, 2.18_
 
 - [ ] 14. **USER ACTION** — publish the axon (step 7, rate limited, one shot)
