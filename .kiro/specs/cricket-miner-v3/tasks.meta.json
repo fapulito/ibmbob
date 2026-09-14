@@ -1,0 +1,17 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Write bug condition exploration probes (BEFORE any fix)": [
+      {
+        "executionId": "6056095d-8695-4f23-80a7-3ac71a07e995",
+        "chatSessionId": "sess_2c7f9952-859a-4369-bd4c-2a186ea064cd",
+        "timestamp": 1789346048198
+      },
+      {
+        "executionId": "552e1158-586c-4217-92c5-7823f99269bc",
+        "chatSessionId": "sess_2c7f9952-859a-4369-bd4c-2a186ea064cd",
+        "timestamp": 1789349215123
+      }
+    ]
+  }
+}

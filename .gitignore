@@ -1,0 +1,41 @@
+﻿# --- secrets: never commit ---
+.env
+.env.*
+*.env
+!env.example
+*.pem
+*.key
+credentials.json
+
+# --- vendored upstream checkout: has its own git repo ---
+cricket/turbovision/
+
+# --- large media / model weights ---
+*.mp4
+*.pt
+*.pth
+*.onnx
+
+# --- python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# --- os / editor ---
+Thumbs.db
+.DS_Store
+
+# --- regenerable artifacts (not source) ---
+cricket/frames/
+cricket/indexprivate.json
+
+# --- images / screenshots: keep in R2 or a data-training location, not git ---
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp

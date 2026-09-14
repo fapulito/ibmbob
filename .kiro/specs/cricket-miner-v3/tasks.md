@@ -1,0 +1,596 @@
+# Implementation Plan
+
+## Overview
+
+Spine: the design's "Execution Order and Success Criteria" table (gates 0a–0f, then steps 1–10).
+The order is load-bearing — the dedicated IPv4 must be proven reachable before the rate-limited
+axon extrinsic; `--dockerfile` (step 3b) must exist before the GHCR push (step 8); `.env`
+(gate 0e) must exist before that push or `get_ghcr_credentials` raises `ConfigError`.
+
+Tasks marked **USER ACTION** cannot be performed by the agent (workspace rules, spend, on-chain
+one-shot, interactive prompts, GitHub web UI). For those the agent prepares exact commands and
+verification snippets; the task completes when the user reports the observed result.
+
+Test framework: `pytest` + `pytest-asyncio`, `testpaths = ["tests"]` (`pyproject.toml`). New tests
+go in `tests/private/` (miner) and `tests/cli/` (CLI), matching existing files
+`tests/private/test_private_security.py` and `tests/cli/test_open_source_miner.py`.
+
+All `sv` and `fly` commands run from `cricket/turbovision`.
+
+---
+
+## Task Dependency Graph
+
+```mermaid
+graph TD
+    subgraph GATES["Gates and baselines — free, must precede everything"]
+        T1["1. Bug condition probes<br/>gates 0a-0d — Gate 0a is a hard STOP"]
+        T2["2. Preservation baselines<br/>observed on unfixed code"]
+        T31["3.1 USER — create .env"]
+        T32["3.2 USER — accept ~$2/mo IPv4 cost"]
+    end
+
+    subgraph LOCAL["Local code work — free, reversible"]
+        T4["4. Dockerfile.v3"]
+        T5["5. /health route"]
+        T6["6. Header gate"]
+        T7["7. --dockerfile option"]
+        T8["8. fly.toml services block"]
+        T9["9. Dockerfile parity guard"]
+        T10["10. Local fix + preservation validation"]
+    end
+
+    T11{{"11. CHECKPOINT — FREE / PAID BOUNDARY<br/>nothing after this is free or fully reversible"}}
+
+    subgraph PAID["Spend, on-chain, one-shot"]
+        T12["12. USER — allocate dedicated IPv4 + deploy"]
+        T13["13. GATE — reachability curl on raw v4"]
+        T14["14. USER — publish axon, rate limited, one shot"]
+        T15["15. USER — push image + commit payload"]
+        T16["16. USER — grant DataAndMike Read on GHCR"]
+    end
+
+    T17["17. Fix validation<br/>17.1 re-runs task 1 probes<br/>17.2 re-runs task 2 tests<br/>17.3 watch fly logs"]
+    T18["18. Checkpoint — all tests pass"]
+    T19["19. DEFERRED to v3.1 — signing-message parity<br/>detached, depends on nothing in v3"]
+
+    T1 --> T4
+    T1 --> T5
+    T1 --> T6
+    T1 --> T7
+    T1 -.->|"Gate 0c may REFUTE Blocker A — then skip 14"| T14
+
+    T2 --> T10
+    T2 --> T17
+
+    T4 --> T8
+    T5 --> T8
+    T7 --> T8
+    T4 --> T9
+    T7 --> T9
+    T4 --> T10
+    T5 --> T10
+    T6 --> T10
+    T5 --> T13
+
+    T8 --> T11
+    T9 --> T11
+    T10 --> T11
+
+    T11 --> T12
+    T32 --> T12
+    T12 ==>|"rate-limit protection"| T13
+    T13 ==>|"must return 200 before the one-shot extrinsic"| T14
+
+    T7 ==>|"prevents two-image divergence"| T15
+    T31 ==>|"ConfigError without it"| T15
+    T9 --> T15
+    T12 --> T15
+    T14 --> T15
+
+    T15 --> T16
+    T14 --> T17
+    T15 --> T17
+    T16 --> T17
+    T17 --> T18
+
+    classDef boundary fill:#ffe6cc,stroke:#d79b00,stroke-width:3px
+    classDef deferred fill:#f5f5f5,stroke:#999999,stroke-dasharray: 5 5
+    class T11 boundary
+    class T19 deferred
+```
+
+Edge legend:
+
+- **Thick edges are load-bearing** — reordering them costs money, a wait, or a wrong on-chain write:
+  - `12 ==> 13 ==> 14` — the rate-limit protection chain. The IPv4 is proven reachable before it is committed on chain, because the axon extrinsic is effectively one-shot.
+  - `7 ==> 15` — two-image-divergence prevention. Without `--dockerfile`, GHCR receives the v2.5 image while Fly runs v3: the spot-check condition that scores 0.
+  - `3.1 ==> 15` — `get_ghcr_credentials` raises `ConfigError` without `.env`.
+- **Dashed edge is conditional** — if Gate 0c reads back a correct IPv4, Blocker A was never real and task 14 is skipped rather than spending the extrinsic.
+- **Task 11 is the free/paid boundary.** Everything above it is local and reversible; everything below involves spend, an append-only on-chain write, or a rate-limited one-shot.
+- Tasks 5, 6 and 7 are independent of each other and may be done in any order.
+- Only direct dependencies are drawn. Transitive edges through task 11 are omitted for readability.
+
+Wave definitions — tasks within a wave may run in parallel; waves run in order. Most later waves
+hold a single task because the ordering is load-bearing (spend, reachability proof, one-shot
+extrinsic), not because the graph was modelled coarsely.
+
+```json
+{
+  "waves": [
+    {
+      "wave": 1,
+      "name": "Gates and baselines",
+      "tasks": [
+        { "id": "1", "dependsOn": [] },
+        { "id": "2", "dependsOn": [] },
+        { "id": "3.1", "dependsOn": [] },
+        { "id": "3.2", "dependsOn": [] }
+      ]
+    },
+    {
+      "wave": 2,
+      "name": "Local code work",
+      "tasks": [
+        { "id": "4", "dependsOn": ["1"] },
+        { "id": "5", "dependsOn": ["1"] },
+        { "id": "6", "dependsOn": ["1"] },
+        { "id": "7", "dependsOn": ["1"] }
+      ]
+    },
+    {
+      "wave": 3,
+      "name": "Local integration and parity",
+      "tasks": [
+        { "id": "8", "dependsOn": ["4", "5", "7"] },
+        { "id": "9", "dependsOn": ["4", "7"] },
+        { "id": "10", "dependsOn": ["2", "4", "5", "6"] }
+      ]
+    },
+    {
+      "wave": 4,
+      "name": "Free/paid boundary checkpoint",
+      "tasks": [
+        { "id": "11", "dependsOn": ["1", "2", "3.1", "3.2", "8", "9", "10"] }
+      ]
+    },
+    {
+      "wave": 5,
+      "name": "Allocate dedicated IPv4 and deploy",
+      "tasks": [
+        { "id": "12", "dependsOn": ["11", "3.2"] }
+      ]
+    },
+    {
+      "wave": 6,
+      "name": "Reachability gate",
+      "tasks": [
+        { "id": "13", "dependsOn": ["12"] }
+      ]
+    },
+    {
+      "wave": 7,
+      "name": "Publish axon (one shot)",
+      "tasks": [
+        { "id": "14", "dependsOn": ["13"] }
+      ]
+    },
+    {
+      "wave": 8,
+      "name": "Push image and commit payload",
+      "tasks": [
+        { "id": "15", "dependsOn": ["3.1", "7", "9", "12", "14"] }
+      ]
+    },
+    {
+      "wave": 9,
+      "name": "Grant GHCR read access",
+      "tasks": [
+        { "id": "16", "dependsOn": ["15"] }
+      ]
+    },
+    {
+      "wave": 10,
+      "name": "Fix validation",
+      "tasks": [
+        { "id": "17", "dependsOn": ["14", "15", "16"] }
+      ]
+    },
+    {
+      "wave": 11,
+      "name": "Final checkpoint",
+      "tasks": [
+        { "id": "18", "dependsOn": ["17"] }
+      ]
+    },
+    {
+      "wave": 12,
+      "name": "Deferred to v3.1 — not part of v3 execution",
+      "deferred": true,
+      "tasks": [
+        { "id": "19", "dependsOn": [] }
+      ]
+    }
+  ]
+}
+```
+
+## Tasks
+
+- [x] 1. Write bug condition exploration probes (BEFORE any fix)
+  - **Property 1: Bug Condition** - Miner Invisible And Unreachable
+  - **CRITICAL**: These probes MUST FAIL/reproduce the bug on unfixed code — failure confirms the bug exists
+  - **DO NOT attempt to fix the code when they fail**
+  - **NOTE**: These probes encode the expected behavior; they validate the fix when they pass after implementation
+  - **GOAL**: Surface counterexamples confirming each of the three independent blockers, and refute any that turn out not to be real
+  - **Scoped PBT Approach**: The input domain is a handful of real deployment states, not a generated space, so scope the property to the concrete failing deployment (UID 207, netuid 44, finney, app `cricket-delivery-miner`) and assert per-state
+  - Gate 0b prerequisite: install the Bittensor SDK into a venv (`pip install bittensor`); `python -c "import bittensor; print(bittensor.__version__)"` must succeed. Use this SAME venv for the SDK probes, the `get_settings()` print, and `sv` later
+  - Gate 0a **STOP GATE**: `sub.metagraph(netuid=44).hotkeys[207]` must equal our hotkey ss58. If it differs or UID 207 does not exist we were deregistered — **STOP and re-plan** (re-registration first, ~743378 rao burn, new UID)
+  - Gate 0c: record `sub.neuron_for_uid(207, netuid=44).axon_info`. Expect `ip=0.0.0.0` or `port=0`, confirming Blocker A. A populated correct IPv4 **refutes** Blocker A and step 7 must be skipped
+  - Gate 0d: from `cricket/turbovision`, print `get_settings().SCOREVISION_NETUID` and `.BITTENSOR_SUBTENSOR_ENDPOINT`. Must emit `44 finney`. There is no `.env`, so this is the code default — record it as the baseline
+  - Probe: `curl -o /dev/null -w "%{http_code}" http://<current_v4>:8000/health` → expect `000` (port closed AND `/health` absent; this probe alone cannot separate the two causes)
+  - Probe: `curl http://<current_v4>/challenge` without a `Host` header → expect `000` (shared IPv4 routes only by Host/SNI, clause 1.11); with a `Host` header → expect `301` (`force_https`, clause 1.12)
+  - Probe: `curl https://cricket-delivery-miner.fly.dev/challenge` → expect `500`, proving the app is alive so the failure is purely edge routing (clause 1.15)
+  - Probe: `curl https://cricket-delivery-miner.fly.dev/health` → expect `404` (clause 1.14)
+  - Probe: read `get_all_revealed_commitments` for our hotkey; assert the payload fails `track != "private"` — expect the `miner_recover` payload with no `track` key (clauses 1.5, 1.6)
+  - Probe: run `get_registered_miners` against finney netuid 44; assert UID 207 is absent
+  - Run all probes on UNFIXED code
+  - **EXPECTED OUTCOME**: Probes reproduce the bug (this is correct — it proves the blockers exist)
+  - Document each counterexample verbatim (status codes, `axon_info` value, commitment payload). If any probe **disagrees** with the hypothesis, re-hypothesise before spending money or the rate-limited extrinsic
+  - Mark complete when every probe has been run and its result recorded
+  - _Requirements: 1.1, 1.2, 1.3, 1.5, 1.6, 1.7, 1.8, 1.10, 1.11, 1.12, 1.14, 1.15_
+
+- [x] 2. Write preservation baseline tests (BEFORE implementing the fix)
+  - **Property 2: Preservation** - Non-Blocker Behavior Unchanged
+  - **IMPORTANT**: Follow observation-first methodology — record what v2.5 actually does, not what it is assumed to do
+  - Observe: build/run the current v2.5 image and record `import cv2, numpy` succeeding (clause 3.4 — the single highest-risk preservation item, since dropping `libgl1` is the one change that could break the container)
+  - Observe: record v2.5 predictions (`kph`, `bounce_x`, `stump_y`) for the local cricket fixtures `data-training/cricket/*.mp4` with `groundtruth-*.json` (clause 3.3)
+  - Observe: record current status codes for `https://cricket-delivery-miner.fly.dev/challenge` on 443 (clause 3.1)
+  - Observe: record `fly status -a cricket-delivery-miner` showing a running machine with no autostop (clause 3.5)
+  - Observe: record which Dockerfile path `sv deploy-pt-miner` builds today — `repo_root / "scorevision/miner/private_track/Dockerfile"` (clause 3.11)
+  - Observe: record `metagraph.hotkeys[207]` (clause 3.7)
+  - Observe: snapshot the `soccer_action` and TCG (`image_url`) branches in `routes.py` (clause 3.8)
+  - Observe: record the `POST /challenge` response shape for a well-formed body (clause 3.9)
+  - Write these as tests in `tests/private/` asserting the observed values, plus a CLI test in `tests/cli/` asserting the default Dockerfile path
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms the baseline behavior to preserve)
+  - Mark complete when the tests are written, run, and passing against unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.7, 3.8, 3.9, 3.11_
+
+- [ ] 3. Pre-flight user gates (USER ACTION)
+
+  - [ ] 3.1 **USER ACTION** — create `cricket/turbovision/.env`
+    - **Why the agent cannot do this**: workspace rules forbid the agent from creating or editing `.env` or any environment variable file
+    - Required content (design Gate 0e): `GITHUB_USERNAME`, `GITHUB_TOKEN` (GHCR PAT with `write:packages`), `GHCR_REPO=pt-solution`, `BITTENSOR_WALLET_COLD=cricket_miner`, `BITTENSOR_WALLET_HOT=default`, `SCOREVISION_NETUID=44`, `BITTENSOR_SUBTENSOR_ENDPOINT=finney`, `BITTENSOR_SUBTENSOR_FALLBACK=wss://entrypoint-finney.opentensor.ai:443`
+    - **Do NOT copy `env.example` verbatim** — it ships `SCOREVISION_NETUID=423` and `BITTENSOR_SUBTENSOR_ENDPOINT=test`, which would land the commitment on testnet 423: structurally perfect, permanently invisible, and indistinguishable from success (drift D3). The netuid/endpoint/fallback lines above are deliberate explicit pins against exactly that
+    - `GITHUB_TOKEN` is a secret: never echoed into logs or command output, never committed, and never placed in `fly.toml` `[env]` (that file is tracked). The container does not need it — only `login_ghcr` on the build host does
+    - Success criterion: the file exists with those keys, AND re-running Gate 0d's print from `cricket/turbovision` still emits `44 finney`
+    - _Requirements: 2.5, 2.6_
+
+  - [ ] 3.2 **USER ACTION** — accept the dedicated IPv4 cost
+    - **Why the agent cannot do this**: it is a spend decision
+    - ~$2/month for a dedicated Fly IPv4, on top of ~$5–8/month for the warm 1 GB shared-CPU machine
+    - Not optional: a shared IP cannot route a request carrying neither `Host` nor SNI, so there is no free path to fixing Blocker C
+    - Earnings remain unknown — no validator request has ever arrived. Proceeding commits ~$2/mo against unquantified return
+    - Success criterion: explicit acceptance recorded
+    - _Requirements: 2.13_
+
+- [ ] 4. Build `Dockerfile.v3` (step 1 — new file, live image untouched)
+
+  - [ ] 4.1 Create `scorevision/miner/private_track/Dockerfile.v3`
+    - **NEVER overwrite the v2.5 `Dockerfile`** — leaving it in place makes rollback a one-line `fly.toml` edit rather than a file restore
+    - Drop `libgl1` (`opencv-python-headless` exists to avoid GL/GUI linkage; `libgl1` drags in mesa, libdrm, X libraries never loaded)
+    - Drop `cryptography==41.0.7` (imported by nothing on the miner path; also removes `cffi`/`pycparser`)
+    - **Keep `libglib2.0-0`** — some `opencv-python-headless` builds still link it
+    - Add `ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1` so `fly logs` shows the first validator request without buffering delay
+    - Keep the COPY set and `CMD` exactly as v2.5
+    - _Bug_Condition: isBugCondition(X) — image bloat inflates the spot-check pull_
+    - _Requirements: 2.19_
+
+  - [ ] 4.2 Gate the image on `import cv2, numpy` inside the built container
+    - Run `docker build -f scorevision/miner/private_track/Dockerfile.v3 -t cricket-miner:v3 .` then `docker run --rm cricket-miner:v3 python -c "import cv2, numpy"`
+    - **EXPECTED OUTCOME**: exits 0
+    - If a shared object is missing, add back **only the specific library named in the error**. Do NOT reinstate `libgl1` reflexively
+    - _Requirements: 2.20, 3.4_
+
+  - [ ] 4.3 Compare image size against v2.5
+    - `docker images` on both tags; expect roughly 70–90 MB smaller
+    - Note: the estimate is measured against v2.5, not against a known floor — no `v2.3` Dockerfile exists in the repo (design Open Question 3)
+    - _Requirements: 2.19_
+
+- [ ] 5. Add `/health` to `server.py` (step 2)
+
+  - [ ] 5.1 Register the `/health` route
+    - Returns `200` with `{"status": "ok", "mode": os.getenv("MINER_MODE", "soccer_action")}` without invoking the predictor
+    - Registered **separately** from `/challenge`, so it inherits neither `get_security_dependencies()` nor the new header gate — this is what makes `curl http://<v4>:8000/health` a clean reachability probe isolating network reachability from predictor behaviour, and stops the existing `/challenge` 500 looking like a genuine failure in `fly logs`
+    - **Import constraint**: the image copies only `miner/private_track/*.py` plus `utils/logging.py` and `utils/schemas.py`, so new code may import stdlib and `fastapi` only
+    - _Bug_Condition: isBugCondition(X) — `GET /health` returns 404 (clause 1.14), and the `/challenge` fallback returns 500 (clause 1.15)_
+    - _Expected_Behavior: `GET /health` returns 200 without invoking the predictor_
+    - _Requirements: 2.18_
+
+  - [ ] 5.2 Unit tests for `/health`
+    - Returns 200
+    - Does **not** invoke the predictor — assert via a patched predictor that raises if called
+    - Passes with no headers present, confirming exemption from the security dependencies and the header gate
+    - Location: `tests/private/`
+    - _Requirements: 2.18_
+
+- [ ] 6. Add the header gate to `security.py` (step 3)
+
+  - [ ] 6.1 Implement `require_validator_headers` and wire it into `get_security_dependencies()`
+    - Parameters `validator_hotkey`, `signature`, `miner_hotkey`, `nonce` as `Header(...)`. FastAPI maps underscores to hyphens case-insensitively, so these bind the **bare** header names (`Validator-Hotkey`, `Nonce`, …) that `build_signed_headers` sends alongside the `X-` prefixed variants — the same mechanism `verify_request` already relies on
+    - Header **presence** is enforced by `Header(...)` itself: a missing header yields FastAPI's 422 before the body is read, which is the cheap rejection clause 2.16 asks for on a 1-vCPU machine
+    - Add `MINER_HOTKEY_SS58 = os.environ.get("MINER_HOTKEY_SS58", "")`; reject with 403 when set and `miner_hotkey` differs. **When unset, degrade to presence-only** — an unset value must never lock the validator out (drift D4). The container has neither the Bittensor SDK nor a mounted wallet, so the ss58 comes from `fly.toml` `[env]`; an ss58 is public, not a secret
+    - Add `HEADER_GATE_ENABLED` (default `true`); append the dependency only when `HEADER_GATE_ENABLED and not VERIFY_ENABLED`, since real verification subsumes it
+    - Docstring must state plainly: **noise filter, NOT authentication** — anyone reading this source can forge these headers
+    - Import constraint as in 5.1: stdlib and `fastapi` only
+    - _Bug_Condition: isBugCondition(X) — challenge requests accepted from any caller with no gating (clause 1.13)_
+    - _Expected_Behavior: complete-and-matching header set admitted; missing or foreign rejected before the predictor runs_
+    - _Preservation: `POST /challenge` keeps the same path and body contract — the gate adds a precondition only (clause 3.9)_
+    - _Requirements: 2.16, 2.17, 3.9_
+
+  - [ ] 6.2 Extend `log_startup_config()` to report gate status
+    - `logging.py` already imports `BLACKLIST_ENABLED`/`VERIFY_ENABLED` from `security`; add `HEADER_GATE_ENABLED` and whether `MINER_HOTKEY_SS58` is set, so `fly logs` shows the effective security posture at startup (drift D9)
+    - Do not log the ss58 value if it is treated as noisy — logging set/unset is sufficient
+    - _Requirements: 2.17_
+
+  - [ ] 6.3 Unit tests for the header gate
+    - All four headers present with matching `miner_hotkey` → pass
+    - Each header missing in turn → 422 before the body is read
+    - Foreign `miner_hotkey` → 403
+    - `MINER_HOTKEY_SS58` unset → presence-only, does not lock the validator out
+    - Bare header names bind correctly, confirming the FastAPI underscore/hyphen mapping the design relies on
+    - `get_security_dependencies()` returns the gate when `VERIFY_ENABLED` is false and omits it when true
+    - `routes.py` cricket branch still returns `PredictionPayload(type="cricket_delivery", item=...)`
+    - Location: `tests/private/test_private_security.py` (extend) or a sibling file
+    - _Requirements: 2.16, 2.17, 2.18, 3.2, 3.9_
+
+  - [ ] 6.4 **Property 4: Header Gate** - Admits Exactly The Validator's Header Set
+    - Property-based test over arbitrary header subsets and `miner_hotkey` values: the gate admits exactly the complete-and-matching set and rejects everything else **before the predictor runs**
+    - Also generate malformed and oversized bodies and assert rejection happens on headers before body parsing, so a 1-vCPU machine cannot be made to do work by an unauthenticated caller
+    - `hypothesis` is **not** currently a dependency. Either add it to `pyproject.toml` dev deps, or — since four boolean headers give a 16-element domain — implement as exhaustive `pytest.mark.parametrize` over all subsets, which is a complete "for all" over that domain. Pick one and note the choice
+    - _Requirements: 2.16, 2.17, 2.18, 3.9_
+
+- [ ] 7. Add `--dockerfile` to `deploy-pt-miner` (step 3b — drift D1 resolution)
+
+  - [ ] 7.1 Re-run a repo-wide search for callers of `build_miner_image`
+    - **Do this before editing** — this is shared CLI code other agents may be touching
+    - One caller found at design time: `deploy_miner` at `private_track_miner.py:217`. Confirm the count and confirm each is unaffected
+    - If a new caller exists, verify the additive default keeps it building the pre-change path
+    - _Requirements: 3.11_
+
+  - [ ] 7.2 Thread `--dockerfile` from `scorevision/__init__.py` through `deploy_miner` into `build_miner_image`
+    - **Strictly additive**: no signature broken, no default behaviour changed
+    - `build_miner_image(image, dockerfile: str | None = None)`; `None` resolves to the existing hardcoded `repo_root / "scorevision/miner/private_track/Dockerfile"` — this is what makes clause 3.11 hold
+    - Relative values resolve against `repo_root`, **not CWD**, because `build_image` already receives `repo_root` as the build context; resolving elsewhere would let the two disagree depending on the caller's working directory
+    - Absolute values used as given
+    - A resolved path that does not exist raises `ConfigError` — **never a silent fallback to the default**. A silent fallback would build v2.5 while `fly.toml` runs v3 and report success, recreating the exact divergence this option exists to prevent. `ConfigError` is already caught in `deploy_miner` and exits non-zero
+    - Name the default path in the `--help` text so the option is discoverable without reading the source
+    - `deploy_miner` gains a trailing keyword argument and forwards it
+    - Document `--dockerfile` in `MINER.md` only if that file already documents the other `deploy-pt-miner` options; otherwise skip, since `MINER.md` is unreliable elsewhere (clause 1.3)
+    - _Bug_Condition: without this option Fly runs `Dockerfile.v3` while GHCR holds the v2.5 image — the spot-check divergence that scores 0 (drift D1)_
+    - _Expected_Behavior: `fly.toml` and the deploy command build the same file_
+    - _Preservation: omitting `--dockerfile` builds exactly the pre-change path (clause 3.11)_
+    - _Requirements: 2.6, 3.11_
+
+  - [ ] 7.3 **Property 5: Preservation** - `--dockerfile` Is Additive And Backward Compatible
+    - `build_miner_image(image)` with the option omitted builds `repo_root / "scorevision/miner/private_track/Dockerfile"` — assert on the path handed to a patched `build_image`
+    - `build_miner_image(image, dockerfile="scorevision/miner/private_track/Dockerfile.v3")` builds that file, not the default
+    - `build_miner_image(image, dockerfile="does/not/exist")` raises `ConfigError` and **never** calls `build_image`
+    - A relative value resolves against `repo_root` regardless of CWD — run the same assertion with CWD set to a subdirectory and to the repo root
+    - An absolute value is used as given
+    - `deploy_miner` forwards `dockerfile`, and the old five-positional-argument call still works
+    - Location: `tests/cli/`
+    - _Requirements: 3.11_
+
+- [ ] 8. Migrate `fly.toml` to `[[services]]` (step 4)
+
+  - [ ] 8.1 Rewrite the service block
+    - Replace `[http_service]` with `[[services]]` at `internal_port = 8000`, `protocol = "tcp"`
+    - Ports: **8000** `handlers = ["http"]` (what the validator actually uses; correct on a dedicated IP where Fly routes by IP alone — raw TCP passthrough also works, but the HTTP handler preserves `X-Forwarded-For` for logging), **443** `["tls", "http"]` and **80** `["http"]` so `https://cricket-delivery-miner.fly.dev` keeps working for manual testing (clause 3.1)
+    - **Drop `force_https`** — do not move it. Retaining it would 301 the validator's plain-HTTP request on 8000 (clause 2.14)
+    - **Carry over `auto_stop_machines = false` and `min_machines_running = 1`** — these already exist in the current file and must not be lost. A cold start costs seconds against a 30 s budget that already covers video download plus inference, so a sleeping machine times out and scores 0 (clause 3.5)
+    - Add `[[services.http_checks]]` against `/health` (`interval 30s`, `timeout 5s`, `grace_period 20s`, `method get`)
+    - Point `[build].dockerfile` at `scorevision/miner/private_track/Dockerfile.v3` with a comment naming the parity invariant
+    - Drop `PORT = "8000"` (the `CMD` hardcodes `--port 8000`, so it was inert) and `[build.args] DOCKER_BUILDKIT = "1"` (also inert) — drift D7
+    - Add `MINER_HOTKEY_SS58 = "<our hotkey ss58>"` to `[env]`
+    - **Omit `BLACKLIST_ENABLED` and `VERIFY_ENABLED` entirely** rather than setting them `false`, so the `security.py` defaults are not overridden by a stale literal (clause 2.17). Effective posture is gate-only until v3.1
+    - Keep `[[vm]]` unchanged
+    - _Bug_Condition: isBugCondition(X) — `unreachable`, clauses 1.10, 1.11, 1.12, 1.13_
+    - _Expected_Behavior: plain HTTP on port 8000 is served, not redirected_
+    - _Preservation: 443 keeps serving `.fly.dev` (3.1); warm machine retained (3.5)_
+    - _Requirements: 2.12, 2.14, 2.17, 2.19, 3.1, 3.5_
+
+  - [ ] 8.2 `fly config validate`
+    - Mandatory before deploy (clause 2.15). `auto_stop_machines` and siblings have moved between `[http_service]` and `[[services]]` across fly.toml revisions, and the schema the installed CLI expects is unverified
+    - **EXPECTED OUTCOME**: validation clean
+    - If it rejects the autostop keys inside `[[services]]`, move them to top level for that CLI version and re-validate — fix rather than deploying and hoping
+    - _Requirements: 2.15_
+
+- [ ] 9. Add the Dockerfile parity guard
+  - Mechanical check that `fly.toml`'s `[build].dockerfile` equals the path passed as `--dockerfile` in step 8 (task 15). Discipline is not sufficient here: divergence means Fly runs one image and GHCR holds another, which is precisely the spot-check condition that scores 0 and risks blacklisting
+  - Run from `cricket/turbovision`:
+    ```bash
+    DF="scorevision/miner/private_track/Dockerfile.v3"
+    grep -E '^\s*dockerfile\s*=' fly.toml | grep -q "\"$DF\"" \
+      && echo "parity OK: $DF" \
+      || { echo "PARITY MISMATCH — fly.toml and --dockerfile disagree"; exit 1; }
+    ```
+  - Also add it as a CI-able assertion in `tests/cli/` — cheap, and the one check that catches the spot-check-zero condition
+  - Treat `fly.toml`'s `[build].dockerfile` and the `--dockerfile` argument as a single edit: never change one without the other
+  - _Requirements: 2.6_
+
+- [ ] 10. Local fix-and-preservation validation
+
+  - [ ] 10.1 **Property 3: Preservation** - Prediction Equivalence Across Images
+    - Generate `ChallengeRequest` instances across the local cricket fixtures (`data-training/cricket/*.mp4` with `groundtruth-*.json`) and assert the v3 image returns predictions equal to the v2.5 baselines recorded in task 2 — same `kph`, `bounce_x`, `stump_y`
+    - Run both containers side by side and compare outputs
+    - Holds by construction (`predictor.py` and `trajectory.py` untouched; the dropped packages are imported by nothing on the prediction path) — the test proves it rather than assuming it
+    - Same `hypothesis`-vs-parametrize choice as 6.4; the fixture set is finite, so parametrizing over it is a complete enumeration
+    - _Requirements: 3.2, 3.3, 3.4_
+
+  - [ ] 10.2 Local integration flow
+    - Build v3, run the container: `GET /health` → 200; `POST /challenge` with valid headers and a real fixture URL → correct cricket payload
+    - Assert the `soccer_action` and TCG (`image_url`) branches in `routes.py` are byte-identical to v2.5 (clause 3.8)
+    - Assert `POST /challenge` with a well-formed body and the four headers returns the same response shape as v2.5 (clause 3.9)
+    - _Requirements: 3.2, 3.6, 3.8, 3.9_
+
+  - [ ] 10.3 Run the full test suite
+    - `pytest` from `cricket/turbovision`
+    - **EXPECTED OUTCOME**: all new and existing tests pass
+    - _Requirements: 3.2, 3.8, 3.9, 3.11_
+
+- [ ] 11. **CHECKPOINT** — everything free and local passes before any spend
+  - Confirm every item below is green. Nothing after this task is free or fully reversible
+    - `Dockerfile.v3` builds; `import cv2, numpy` succeeds inside the container; size ~70–90 MB smaller than v2.5
+    - `/health` returns 200 locally without invoking the predictor
+    - Header gate unit tests and Property 4 pass
+    - `--dockerfile` unit tests and Property 5 pass; `build_miner_image` caller search confirmed
+    - Dockerfile parity check passes
+    - `fly config validate` clean
+    - `get_settings()` prints `44 finney` from `cricket/turbovision`
+    - Property 3 prediction equivalence passes
+    - Gates 0a–0f all satisfied, including the user-created `.env` and the accepted cost
+  - Ask the user before proceeding. If anything above is red, stop here
+  - _Requirements: 2.15, 2.19, 2.20, 3.4, 3.11_
+
+- [ ] 12. **USER ACTION** — allocate a dedicated IPv4 and deploy (step 5)
+  - **Why the agent cannot do this**: paid infrastructure change
+  - From `cricket/turbovision`:
+    ```bash
+    fly config validate
+    fly ips list -a cricket-delivery-miner          # record whether the existing v4 is shared
+    fly ips allocate-v4 -a cricket-delivery-miner   # dedicated, paid (~$2/mo)
+    fly ips list -a cricket-delivery-miner          # confirm NOT reported as shared
+    fly deploy -a cricket-delivery-miner
+    ```
+  - If the first `fly ips list` shows the existing v4 is already dedicated, the add-on cost may not apply (design Open Question 4)
+  - The existing IPv6 (`2a09:8280:1::18b:d679:0`) is **not** a fallback: `miners.py:27` builds `f"http://{miner.ip}:{miner.port}/challenge"` with no bracketing, so a bare IPv6 host produces a malformed URL. IPv4-only is a hard exclusion, not a preference (clause 2.4)
+  - Success criterion: the user reports a **dedicated** v4 in `fly ips list` and a successful deploy
+  - Reversible: the IP can be released, though releasing it re-breaks Blocker C
+  - _Requirements: 2.4, 2.13, 2.15_
+
+- [ ] 13. **GATE** — reachability curl on the raw dedicated IPv4 (step 6)
+  - This gate exists solely to protect step 7's rate-limited extrinsic: the IP is proven reachable **before** it is committed on chain
+  - ```bash
+    V4=$(fly ips list -a cricket-delivery-miner | awk '/v4/{print $2}')
+    curl -s -o /dev/null -w "%{http_code}\n" http://$V4:8000/health
+    curl -s -X POST http://$V4:8000/challenge \
+      -H "Content-Type: application/json" \
+      -H "Validator-Hotkey: 5xxx" -H "Signature: 0xdeadbeef" \
+      -H "Miner-Hotkey: <our hotkey ss58>" -H "Nonce: 1" \
+      -d '{"challenge_id":"reach-1","video_url":"https://example.com/x.mp4"}' \
+      -o /dev/null -w "%{http_code}\n"
+    ```
+  - Signals: `000` means no response and **Blocker C is not fixed**; any status code means the connection reached the app; `200` on `/health` is the pass; a **`500`** from the second call is **SUCCESS** — it proves the request arrived, passed the header gate, was parsed, and failed only on the fake video URL; `422` with no headers confirms the header gate is working (a valid but less informative reachability signal)
+  - **DO NOT PROCEED to task 14 until `/health` returns 200 on the raw v4**
+  - _Requirements: 2.11, 2.12, 2.14, 2.18_
+
+- [ ] 14. **USER ACTION** — publish the axon (step 7, rate limited, one shot)
+  - **Why the agent cannot do this**: on-chain serving is rate limited, so a wrong IP costs a wait before retry. Effectively one-shot
+  - Preferred, version-stable path, from the Gate 0b venv:
+    ```python
+    import bittensor as bt
+    from bittensor.core.extrinsics.serving import serve_extrinsic
+
+    PUBLIC_IPV4 = "<dedicated fly ipv4, verified reachable in task 13>"
+    wallet = bt.wallet(name="cricket_miner", hotkey="default")
+    sub = bt.subtensor(network="finney")
+    ok = serve_extrinsic(subtensor=sub, wallet=wallet, ip=PUBLIC_IPV4, port=8000,
+                         protocol=4, netuid=44,
+                         wait_for_inclusion=True, wait_for_finalization=True)
+    print("serve_axon:", ok)
+    ```
+  - Fallback if that import path has moved: `sub.serve_axon(netuid=44, axon=bt.axon(wallet=wallet, ip=PUBLIC_IPV4, port=8000, external_ip=PUBLIC_IPV4, external_port=8000))`
+  - `btcli axon set` is **not** used — it does not exist in bittensor-cli 9.x and `MINER.md:21` is unreliable here (clause 2.2)
+  - Skip this task entirely if Gate 0c (task 1) already read back a correct IPv4 — Blocker A would already be resolved and the extrinsic would be spent for nothing
+  - **Verification is the read-back, not the extrinsic's return value**: `print(sub.neuron_for_uid(207, netuid=44).axon_info)` must show `ip=<dedicated v4>`, `port=8000`, `ip_type=4`. A `True` return with `ip=0.0.0.0` on read-back means not published — treat success as provisional until the read-back agrees
+  - Reversal: `reset_axon` republishes a placeholder (`ip 0, port 1, protocol 4`), **subject to the same rate limit**. Plan on not needing it
+  - Success criterion: the user reports the `axon_info` read-back values
+  - _Bug_Condition: isBugCondition(X) — `axonInvisible`, clauses 1.1, 1.2, 1.3, 1.4_
+  - _Expected_Behavior: `axon_info` reports the dedicated IPv4, `port=8000`, `ip_type=4`_
+  - _Requirements: 2.1, 2.2, 2.3, 2.4_
+
+- [ ] 15. **USER ACTION** — push the image and commit the full payload (step 8)
+  - **Why the agent cannot do this**: pushes to GHCR using the secret token from `.env`, writes an append-only on-chain commitment, and requires interactive selection of the element ID from the live manifest prompt
+  - Run the task 9 parity check first, then from `cricket/turbovision`:
+    ```bash
+    sv -v deploy-pt-miner --tag v3.0.0 --no-start \
+       --dockerfile scorevision/miner/private_track/Dockerfile.v3
+    ```
+  - `--no-start` because the container runs on Fly, not locally; without it `start_miner_container` tries to start a local container with a mounted wallet (drift D8)
+  - `--dockerfile`'s value MUST equal `fly.toml`'s `[build].dockerfile` — the parity invariant
+  - Run from `cricket/turbovision` so bare `load_dotenv()` finds the task 3.1 `.env`
+  - **Omit `--element-id`** so `_resolve_private_element_id_from_manifest` prompts, and select from the live manifest — never type it (clause 2.7). `_pick_latest_private_commit_for_element` compares exact strings and local artefacts disagree on the separator (`cricket/indexprivate.json` uses `manako_DetectCricketDelivery`, other references use `manako/DetectCricketDelivery`). A wrong separator drops the miner with no log line
+  - One command builds, pushes and commits together, so image coordinates cannot drift from the pushed image (clause 2.6). It writes `role: "miner"`, `track: "private"`, `image_repo`, `image_tag`, `image_digest`, `element_id`, `hotkey` via `set_reveal_commitment(..., blocks_until_reveal=1)` — the only kind `get_all_revealed_commitments` returns (clause 2.8)
+  - **Verification is NOT exit status.** `commit_on_chain` catches `Exception`, logs an error, warns, and execution continues to `console.done()` — a failed commit looks like a successful run (drift D2). Require the `Commit payload: {...}` line at INFO (hence `-v`) showing `track=private`, `role=miner` and real `image_repo`/`image_tag`, **AND** the absence of any `On-chain commit failed` warning
+  - **Not reversible.** Correction is append-only: commit again, since `_pick_latest_private_commit_for_element` selects the highest block (clause 2.10). There is no undo
+  - Success criterion: the user reports the `Commit payload` line and confirms no `On-chain commit failed` warning
+  - _Bug_Condition: isBugCondition(X) — `commitInvisible`, clauses 1.5, 1.6, 1.7, 1.8, 1.9_
+  - _Expected_Behavior: a revealed private-track commitment on netuid 44 / finney with real image coordinates and an exact-matching element ID_
+  - _Requirements: 2.5, 2.6, 2.7, 2.8, 2.10_
+
+- [ ] 16. **USER ACTION** — grant `DataAndMike` Read on the GHCR package (step 9)
+  - **Why the agent cannot do this**: GitHub web UI
+  - `https://github.com/users/<GITHUB_USERNAME>/packages/container/pt-solution/settings` → Manage access → Invite teams or people → add `DataAndMike` with **Read**
+  - Without this the validator cannot pull the image for spot-check. The miner then passes challenges and is still scored 0, with blacklisting risk
+  - Revocable at any time
+  - Success criterion: the user reports the grant visible in package settings
+  - _Requirements: 2.9_
+
+- [ ] 17. Fix validation — confirm the bug is fixed and nothing regressed
+
+  - [ ] 17.1 Verify the bug condition exploration probes now pass
+    - **Property 1: Expected Behavior** - Validator Can Discover And Reach The Miner
+    - **IMPORTANT**: Re-run the SAME probes from task 1 — do NOT write new ones. Those probes encode the expected behavior
+    - `axon_info` → `ip=<dedicated v4>`, `port=8000`, `ip_type=4`
+    - Commitment → `track=private`, `role=miner`, non-empty `image_repo`/`image_tag`, `element_id` exactly matching the manifest, revealed, on netuid 44 / finney
+    - `curl http://<v4>:8000/health` → `200`
+    - `POST http://<v4>:8000/challenge` → any status ≠ `000`
+    - `get_registered_miners` against finney netuid 44 → includes UID 207
+    - **EXPECTED OUTCOME**: probes PASS (confirms the bug is fixed)
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.12, 2.13, 2.14, 2.15_
+
+  - [ ] 17.2 Verify the preservation tests still pass
+    - **Property 2: Preservation** - Non-Blocker Behavior Unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2 — do NOT write new ones
+    - `https://cricket-delivery-miner.fly.dev/challenge` on 443 unchanged (3.1); cricket routing and payload shape unchanged (3.2); prediction values identical (3.3); `cv2`/`numpy` import (3.4); `fly status` shows a warm machine with no autostop (3.5); responses inside the 30 s timeout (3.6); `metagraph.hotkeys[207]` unchanged (3.7); `soccer_action`/TCG branches unmodified (3.8); `POST /challenge` contract unchanged (3.9); rollback still available from git (3.10); `sv deploy-pt-miner` without `--dockerfile` builds the pre-change path (3.11)
+    - **EXPECTED OUTCOME**: all tests PASS (confirms no regressions)
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11_
+
+  - [ ] 17.3 Watch for `Challenge received` (step 10)
+    - `fly logs -a cricket-delivery-miner`
+    - **EXPECTED OUTCOME**: `Challenge received` from a real validator request — end-to-end fix confirmed
+    - Unbuffered logs (`PYTHONUNBUFFERED=1`) mean the first request shows without delay
+    - If it never appears while 17.1 fully passes, re-check the GHCR grant (task 16) and the element ID string match, then re-hypothesise
+    - _Requirements: 2.9, 2.19_
+
+- [ ] 18. Checkpoint — ensure all tests pass
+  - Run the full suite from `cricket/turbovision` and confirm every task-1 probe and task-2 baseline is green
+  - Ask the user if questions arise
+
+- [ ] 19. **DEFERRED / v3.1 — do NOT do as part of v3** — prove signing-message parity before ever setting `VERIFY_ENABLED=true`
+  - Recorded so it is not lost. **Enabling verification without proving this would 401 every legitimate validator request**, taking the miner from "no traffic" to "no traffic, plus rejecting the traffic it finally has"
+  - Two independent mismatches, neither resolvable offline because `fiber` is not installed:
+    - **Message construction**: the validator (`utils/request_signing.py`) signs `f"{nonce}{blake2b(payload, 32).hexdigest()}"`, omitting `miner_hotkey` entirely. The miner (`security.py:verify_request`) verifies `construct_header_signing_message(nonce, miner_hotkey, payload_hash)` over `signatures.get_hash(body)` — different strings over possibly different digests
+    - **Payload bytes (drift D6)**: `miners.py` signs `request.model_dump_json(exclude=...).encode()` but sends `json=request.model_dump(exclude=...)`, letting httpx serialise. Pydantic and httpx need not agree on separators, key ordering or float representation, and httpx is **unpinned** in the validator's `pyproject.toml` while the miner image pins `httpx==0.25.2`. If the byte streams differ, `get_hash(body)` cannot reproduce the signed hash regardless of the first mismatch
+  - Prerequisites in order: install `fiber` and print `construct_header_signing_message` / `get_hash` for a known input; capture the exact bytes httpx puts on the wire and compare to `model_dump_json().encode()`; only then enable `VERIFY_ENABLED=true`, behind a rollback
+  - This is also why the v3 header gate is justified on correctness grounds, not only image size: it is the only guard that cannot lock the validator out
+
+---
+
+## Notes
+
+- **Gate 0a in task 1 is a STOP gate, not a checkbox.** If `metagraph(netuid=44).hotkeys[207]` is not our hotkey, or UID 207 does not exist, we were deregistered and the whole plan changes: re-registration first (~743378 rao burn, new UID). Do not continue down the task list on the assumption that UID 207 is still ours.
+- **Task 14 may be skippable.** Gate 0c reads `axon_info` before anything is spent. A populated, correct IPv4 refutes Blocker A, and publishing the axon anyway burns a rate-limited extrinsic for nothing. Read the gate result before deciding.
+- **Never treat exit status as verification for the commit (drift D2).** `commit_on_chain` catches `Exception`, logs, warns, and lets execution continue to `console.done()` — a failed commit looks exactly like a successful run. The only accepted evidence is the `Commit payload: {...}` line at INFO showing `track=private` / `role=miner` with real image coordinates, **plus** the absence of any `On-chain commit failed` warning. The same principle applies to task 14: the extrinsic's `True` return is provisional until the `axon_info` read-back agrees.
+- **The `hypothesis`-vs-`parametrize` decision is still open.** `hypothesis` is not currently a dependency. Properties 3, 4 and 5 each have a finite input domain (16 header subsets; a fixed fixture set), so exhaustive `pytest.mark.parametrize` is a complete "for all" over those domains. Either add `hypothesis` to dev deps or parametrize — pick one, apply it consistently across 6.4, 7.3 and 10.1, and record the choice in the spec rather than leaving it implicit in the test files.
+- **Task 7 touches shared CLI code.** `build_miner_image` may have gained callers since design time. Re-run the repo-wide caller search at implementation time (task 7.1) before editing, and confirm every caller still builds the pre-change path when `--dockerfile` is omitted.
+- **`fly config validate` may reject the autostop keys inside `[[services]]`.** `auto_stop_machines` and `min_machines_running` have moved between `[http_service]` and `[[services]]` across fly.toml revisions, and the schema the installed CLI expects is unverified. If validation rejects them, move them to top level for that CLI version and re-validate. Do not deploy past a validation failure — a sleeping machine times out inside the 30 s budget and scores 0.
+- **`GITHUB_TOKEN` handling.** Never echoed into logs or command output, never committed, and never placed in `fly.toml` `[env]` — that file is tracked. The container never needs it; only `login_ghcr` on the build host does. `MINER_HOTKEY_SS58` is the opposite case: an ss58 is public and belongs in `fly.toml` `[env]`.
+
+## Out of scope
+
+- **Model accuracy** — `trajectory.py` and `predictor.py` constants are untouched. The 92.8% local score is preserved by construction
+- **Full signature verification** — deferred to task 19
+- **`env.example`** — already updated with a comment naming the mainnet finney values (comment-only). Design Open Question 7 is answered; no task required
