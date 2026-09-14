@@ -1,0 +1,157 @@
+@fapulito ➜ /workspaces/codespaces-blank $ btcli stake --help
+                                                                                                            
+ Usage: btcli stake [OPTIONS] COMMAND [ARGS]...                                                             
+                                                                                                            
+ Query and manage stake.                                                                                    
+                                                                                                            
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --help  -h        Show this message and exit.                                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Add & move stake ───────────────────────────────────────────────────────────────────────────────────────╮
+│ add                Stake TAO from the coldkey onto a hotkey.                                             │
+│ remove             Unstake alpha from a hotkey back to the coldkey.                                      │
+│ move               Move alpha between hotkeys and/or subnets.                                            │
+│ transfer           Transfer stake ownership to another coldkey.                                          │
+│ swap               Swap stake on one hotkey between two subnets.                                         │
+│ burn               Buy back / burn stake via the stake-burn extrinsic.                                   │
+│ unstake-all        Unstake everything from a hotkey across all subnets.                                  │
+│ unstake-all-alpha  Unstake all alpha from a hotkey across subnets (moves it to root).                    │
+│ wizard             Interactive stake movement guide (use `btcli stake move`, `transfer`, or `swap`).     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Positions ──────────────────────────────────────────────────────────────────────────────────────────────╮
+│ show               Show stake held by a coldkey on a hotkey within a subnet (in the subnet's own         │
+│                    currency).                                                                            │
+│ list               List stake per subnet for a coldkey (or all wallets with --all).                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Auto-stake ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ auto               List auto-stake destinations for a coldkey.                                           │
+│ set-auto           Set auto-stake destination for a subnet.                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Delegation ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ child              Child hotkey delegation.                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+btcli stake add --help
+                                                                                                            
+ Usage: btcli stake add [OPTIONS]                                                                           
+                                                                                                            
+ Stake TAO from the coldkey onto a hotkey.                                                                  
+                                                                                                            
+ Swaps TAO from the coldkey's free balance into the subnet's alpha at the                                   
+ current pool price and credits the result to your stake on the hotkey; on                                  
+ netuid 0 (root) the stake stays TAO-denominated. The swap moves the pool,                                  
+ so large amounts incur slippage. By default the call is slippage-protected:                                
+ it fails (`SlippageTooHigh`) instead of filling once the price rises more                                  
+ than `rate_tolerance` (5%) above the price at submission — raise the                                       
+ tolerance or set `slippage_protection` to False to execute at any price,                                   
+ or use `add_stake_limit` to set an explicit limit price. The position's                                    
+ value then follows the pool price and the validator's performance, and can                                 
+ be exited later with `remove_stake`. Pass `all` to stake the whole free                                    
+ balance minus the existential deposit and a small fee headroom. Fails if                                   
+ the coldkey's free balance cannot cover the amount plus the transaction                                    
+ fee, and with `AmountTooLow` when the amount is below the chain minimum                                    
+ of 0.002 TAO plus the swap fee. Dynamic subnets also reject a single swap                                  
+ larger than 1000x the pool's TAO reserve (`InsufficientLiquidity`).                                        
+                                                                                                            
+ Docs: https://www.bittensor.com/docs/tx/add-stake                                                          
+                                                                                                            
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --hotkey                                               <str>    Hotkey the stake is added to (the        │
+│                                                                 validator you are backing). ss58         │
+│                                                                 address, address-book or proxy-book      │
+│                                                                 name, or a local hotkey name (HOTKEY or  │
+│                                                                 WALLET/HOTKEY). Defaults to your         │
+│                                                                 wallet's hotkey.                         │
+│ --netuid                                               <int>    Subnet the stake lives on (netuid 0 is   │
+│                                                                 the root network). (required)            │
+│ --amount-tao,--amount                                  <str>    How much of the coldkey's free balance   │
+│                                                                 to stake, or `all` (everything minus the │
+│                                                                 existential deposit and fee headroom).   │
+│                                                                 Amount in TAO. Pass `all` for the entire │
+│                                                                 available amount. (required)             │
+│ --slippage-protection      --no-slippage-protection             Bound the price the swap may execute at  │
+│                                                                 (on by default): the call fails          │
+│                                                                 (`SlippageTooHigh`) instead of filling   │
+│                                                                 once the pool price moves more than      │
+│                                                                 `rate_tolerance` from the price at       │
+│                                                                 submission. Disable to execute at any    │
+│                                                                 price.                                   │
+│                                                                 [default: slippage-protection]           │
+│ --rate-tolerance                                       <float>  Maximum price move slippage protection   │
+│                                                                 accepts, as a fraction (0.05 = 5%).      │
+│                                                                 Ignored when slippage protection is      │
+│                                                                 disabled.                                │
+│                                                                 [default: 0.05]                          │
+│ --help                 -h                                       Show this message and exit.              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Global: network & wallet ───────────────────────────────────────────────────────────────────────────────╮
+│ --network             -n      <str>  Network name (finney/test/local) or ws:// endpoint.                 │
+│ --fallback-endpoints          <str>  Comma-separated ws:// endpoints tried when the primary is           │
+│                                      unreachable ('none' to disable).                                    │
+│ --archive-endpoints           <str>  Comma-separated archive ws:// endpoints for reads older than the    │
+│                                      primary retains ('none' to disable).                                │
+│ --retry-forever                      Never give up on connection failures; keep cycling the endpoint     │
+│                                      pool.                                                               │
+│ --wallet              -w      <str>  Coldkey wallet name.                                                │
+│ --wallet-hotkey       -H      <str>  Hotkey name within the wallet.                                      │
+│ --wallet-path                 <str>  Wallet directory.                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Global: output ─────────────────────────────────────────────────────────────────────────────────────────╮
+│ --json                    Machine-readable JSON output.                                                  │
+│ --quiet    -q             Suppress informational output.                                                 │
+│ --verbose  -v      <int>  Diagnostic logging on stderr: -v connection lifecycle, -vv full debug, -vvv    │
+│                           raw websocket frames.                                                          │
+│                           [default: 0]                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Global: execution ──────────────────────────────────────────────────────────────────────────────────────╮
+│ --yes,--no-prompt   -y                                                    Skip confirmation prompts.     │
+│ --dry-run                                                                 Preview mutations without      │
+│                                                                           submitting.                    │
+│ --mev-shield            --no-mev-shield                                   Encrypt the extrinsic via the  │
+│                                                                           MevShield pallet so the        │
+│                                                                           mempool can't front-run it.    │
+│                                                                           Stake-trading commands shield  │
+│                                                                           by default; pass               │
+│                                                                           --no-mev-shield to submit in   │
+│                                                                           the clear, or persist the      │
+│                                                                           choice with `btcli config set  │
+│                                                                           mev_shield false`.             │
+│ --proxy-for                                <str>                          Dispatch as this account       │
+│                                                                           (ss58, proxy-book/address-book │
+│                                                                           name, or local wallet name)    │
+│                                                                           via Proxy.proxy; your wallet   │
+│                                                                           key signs as its registered    │
+│                                                                           proxy. Pass `self` to bypass a │
+│                                                                           configured default.            │
+│ --force-proxy-type                         <Any|Owner|NonCritical|NonTra  Require this exact proxy type  │
+│                                            nsfer|Senate|NonFungible|Triu  to be used (with --proxy-for). │
+│                                            mvirate|Governance|Staking|Re                                 │
+│                                            gistration|Transfer|SmallTran                                 │
+│                                            sfer|RootWeights|ChildKeys|Su                                 │
+│                                            doUncheckedSetCode|SwapHotkey                                 │
+│                                            |SubnetLeaseBeneficiary|RootC                                 │
+│                                            laim>                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Global: coldkey unlock ─────────────────────────────────────────────────────────────────────────────────╮
+│ --wallet-password-file        <str>  File containing the coldkey password (one line).                    │
+│                                      [env var: BT_WALLET_PASSWORD_FILE]                                  │
+│ --macos-password                     Unlock encrypted coldkeys via a native macOS password dialog.       │
+│ --keychain-password                  Unlock encrypted coldkeys from the macOS Keychain (see wallet       │
+│                                      keychain save).                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Global: extension signing ──────────────────────────────────────────────────────────────────────────────╮
+│ --signer                   <str>  Signing backend: wallet (default), extension, ledger, or vault         │
+│                                   (Polkadot Vault via QR).                                               │
+│ --ledger                          Sign on a Ledger device (Polkadot generic app); shorthand for --signer │
+│                                   ledger.                                                                │
+│ --ledger-account           <int>  Ledger derivation account (m/44'/354'/ACCOUNT'/0'/index'). Default 0.  │
+│ --ledger-index             <int>  Ledger derivation address index (m/44'/354'/account'/0'/INDEX').       │
+│                                   Default 0.                                                             │
+│ --signer-address           <str>  External signer account ss58 address (extension: prompts when omitted; │
+│                                   vault: falls back to the wallet's coldkeypub).                         │
+│                                   [env var: BT_SIGNER_ADDRESS]                                           │
+│ --extension-source         <str>  Filter extension accounts by source (e.g. talisman, polkadot-js).      │
+│ --extension-browser        <str>  Browser for the bridge page: firefox, chrome, or an app name.          │
+│                                   [env var: BT_EXTENSION_BROWSER]                                        │
+│ --extension-bridge         <str>  Extension bridge WebSocket URL. [env var: BT_EXTENSION_BRIDGE]         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯

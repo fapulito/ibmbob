@@ -1,0 +1,22 @@
+sv deploy-pt-miner --help
+usage: sv [-h] [--logging.debug] [--logging.trace] [--logging.info]
+          [--logging.record_log] [--logging.logging_dir LOGGING.LOGGING_DIR]
+          [--logging.enable_third_party_loggers] [--config CONFIG] [--strict]
+          [--no_version_checking]
+
+options:
+  -h, --help            show this help message and exit
+  --logging.debug       Turn on bittensor debugging information.
+  --logging.trace       Turn on bittensor trace level information.
+  --logging.info        Turn on bittensor info level information.
+  --logging.record_log  Turns on logging to file.
+  --logging.logging_dir LOGGING.LOGGING_DIR
+                        Logging default root directory.
+  --logging.enable_third_party_loggers
+                        Enables logging for third-party loggers.
+  --config CONFIG       If set, defaults are overridden by passed file.
+  --strict              If flagged, config will check that only exact arguments have been
+                        set.
+  --no_version_checking
+                        Set `true to stop cli version checking.
+@fapulito ➜ ~/turbovision (main) $ 
