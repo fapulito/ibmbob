@@ -613,7 +613,7 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
       (`test_soccer_action_branch_runs_the_real_predictor_end_to_end`) -- no new failures, no
       regressions
 
-  - [ ] 3.4 G3 â€” measure the end-on depth axis
+  - [x] 3.4 G3 â€” measure the end-on depth axis
     - `_measure_depth_scale` currently accepts only the batter's popping crease and has never
       returned a value on any fixture. Add candidate landmarks and take the first that passes its
       own plausibility check, recording which one was used:
@@ -635,6 +635,60 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
     - _Expected_Behavior: `valid=True` on at least one end-on fixture, with the landmark named_
     - _Preservation: `auto` still resolves to `constants` when nothing was measured (clause 3.5)_
     - _Requirements: 2.9, 2.10, 3.5_
+    - **Result**: `pitch_homography.py`'s `_measure_depth_scale` renamed to
+      `_measure_depth_via_popping_crease` (behaviour unchanged â€” the pre-existing crease search
+      already *was* the task's third candidate, "the existing popping crease, retained"; the task
+      text's candidates (b) and (c) name the same 1.22 m landmark, not two distinct ones, so this
+      is a rename to say explicitly which landmark it measures, not a new search). Added
+      `_measure_depth_via_bowlers_end_wicket`, a new candidate tried first: reuses
+      `_vertical_bars`/`_cluster_bars_by_x` (the same primitives `_detect_wicket_endon` already
+      uses) to look for a second, smaller, roughly-x-aligned wicket-shaped bar group above the
+      batter's-end wicket, gated on row-gap, x-alignment, height-ratio and a plausibility bound on
+      the resulting depth scale relative to the transverse-derived reference (rejects spurious
+      pairings, e.g. an ad-board edge, rather than producing an arbitrary value). `_try_calibrate_endon`
+      now tries the bowler's-end wicket first, falls back to the popping crease, and only then
+      falls back to derived â€” `valid=True` only when one of the two landmarks was actually
+      measured. Added `self.depth_landmark` (`"bowlers_end_wicket"` / `"popping_crease"` /
+      `"derived"`), set on every end-on calibration path including "no wicket found at all",
+      logged in `_try_calibrate_endon`'s existing debug line. `cricket/validate.py` now reads and
+      prints `depth_landmark` per fixture (per-fixture diagnostics block and the summary table)
+      and carries it into the result dict â€” diagnostics only, does not affect any score
+    - **Result â€” tests (`tests/private/test_depth_calibration.py`, new, 11 tests, all pass)**:
+      synthetic bar dicts/frames, same style as `test_camera_classification.py` and
+      `test_shot_selection.py`. Covers `_measure_depth_via_bowlers_end_wicket` end to end (accepts
+      a plausible second group and computes `row_gap / PITCH_LENGTH_M`; rejects no-second-group,
+      x-misaligned, row-gap-too-small, and implausible-depth-scale cases), a rename-preservation
+      check plus one direct measurement test for `_measure_depth_via_popping_crease`, and
+      `_try_calibrate_endon`'s ordering/provenance/fallback logic (bowler's-end wicket preferred
+      when both would succeed; falls back to popping crease; the core preservation case â€”
+      neither landmark found, `valid` stays False, `depth_landmark="derived"`, the derived scale
+      is still served via `anchor_calibrated`, bit-for-bit the pre-fix value; and the pre-existing
+      "no wicket found at all" branch, unaffected)
+    - **Result â€” per-fixture harness comparison against task 3.3's baseline, and the honest
+      finding the task asked for**: re-ran `python cricket/validate.py`. On all four local
+      fixtures (be13, efc0, 8b97, f81d) neither the bowler's-end wicket nor the popping crease was
+      found â€” `depth_landmark=derived` on every one, `valid` stays False, and every served score
+      is bit-for-bit unchanged from task 3.3's baseline: be13 92.8%, efc0 19.4%, 8b97 10.4%
+      (`auto`->`constants` on all three; f81d still unscoreable, 10 pts). This is **not** a
+      failure to implement the task â€” it is the real finding the task explicitly anticipated
+      ("if no landmark can be measured on any fixture, that is a real finding, not a failure to
+      report"): be13 and efc0's bowler's-end wicket is occluded (standing umpire / bowler plus
+      frame edge, per the module docstring's own prior finding) and their popping-crease stroke is
+      obscured by the batter's feet/pads, exactly as already documented before this task; 8b97 and
+      f81d's selected delivery shots are wide-enough behind-the-arm views in principle but neither
+      landmark's own plausibility gates found a corroborating second wicket group or crease line
+      in them either. No threshold was relaxed to force a pass â€” `bounce_x` (23% of the score at
+      0.25 m tolerance) remains, as before, a function of `_ENDON_DEPTH_PER_TRANSVERSE` and
+      `_ENDON_CAMERA_DISTANCE_M`, two constants fitted on two clips, not a per-video measurement,
+      on all four local fixtures
+    - **Result â€” test run**: combined set
+      (`test_prediction_accuracy_preservation.py` + `test_prediction_accuracy_chain_readonly.py` +
+      `test_prediction_accuracy_latency_baseline.py` + `test_header_gate.py` +
+      `test_v25_baseline_predictions.py` + `test_camera_classification.py` +
+      `test_depth_calibration.py`): 471 passed, 16 skipped. Full `tests/private/` suite (excluding
+      the pre-existing `fiber`-import-blocked file): 613 passed, 26 skipped, 1 pre-existing
+      unrelated failure (`test_soccer_action_branch_runs_the_real_predictor_end_to_end`, the same
+      one documented in tasks 2/3.1/3.2/3.3) â€” no new failures, no regressions
 
   - [ ] 3.5 G4 â€” tracker thresholds and rejection logging
     - Replace `_ENDON_SEED_MIN_PY_OFFSET = 200` and `_ENDON_MIN_DEPTH_PX = 147` with metre
