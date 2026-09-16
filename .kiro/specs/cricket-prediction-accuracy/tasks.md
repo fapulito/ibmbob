@@ -337,7 +337,7 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
   - Mark complete when the harness runs, every probe has been run, and every result is recorded
   - _Requirements: 1.1, 1.2, 1.3, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.15, 1.19, 1.21, 1.22, 1.23, 1.24, 1.25, 1.26, 1.28, 1.29, 1.30, 1.31, 1.32, 1.33, 1.34_
 
-- [ ] 2. Write preservation property tests (BEFORE implementing the fix)
+- [x] 2. Write preservation property tests (BEFORE implementing the fix)
   - **Property 2: Preservation** - Everything Not On The Prediction Path
   - **IMPORTANT**: Follow observation-first methodology â€” record what the current code actually
     does, not what it is assumed to do. The v3 spec's
@@ -368,6 +368,41 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
   - Observe: per-fixture wall-clock, as the comparator for the 30 s budget (clause 3.3)
   - Run tests on UNFIXED code
   - **EXPECTED OUTCOME**: tests PASS (this confirms the baseline behaviour to preserve)
+  - **Result**: four test files, all passing on unfixed code (no pipeline files touched --
+    `pitch_homography.py`, `ball_tracker.py`, `trajectory.py`, `predictor.py`, `cricket/validate.py`
+    all confirmed diff-free). Three new files under `tests/private/`:
+    `test_prediction_accuracy_preservation.py` (clauses 3.1/3.2/3.4/3.5/3.7/3.10 -- ~335 cases,
+    generated/degenerate trajectories and env strings per the task's own convention: `hypothesis`
+    is not a dependency, so seeded-random generator functions feed `pytest.mark.parametrize`
+    instead, consistent with the cricket-miner-v3 precedent), `test_prediction_accuracy_chain_readonly.py`
+    (clauses 3.6/3.8, read-only), `test_prediction_accuracy_latency_baseline.py` (clause 3.3,
+    reusing task 1's Probe 12 numbers as recorded bounds with an opt-in live re-run). One existing
+    file extended, not duplicated: `test_header_gate.py` gained one test driving a real
+    (non-raising) cricket prediction through the full ASGI app + header gate together -- the one
+    combination existing coverage did not already have
+  - **Result -- live read-only re-verification (clauses 3.6/3.8)**: re-queried the chain live,
+    independently, immediately before writing the test file. All current and unchanged from the
+    cricket-miner-v3 spec's task 14/15 recordings: `axon_info` for UID 207 ->
+    ip=204.10.79.141 port=8000 ip_type=4 is_serving=True, hotkey/coldkey match
+    `5CyQ9buHwqgCS7158ytsX8BQvT7WSEH8gDMWq7tqUV3Fshsa` /
+    `5F2TqN39BBGYjcmMQuN3pWaGWq2Ymf3iy5WsLhfV6YtXoUkF`. Private-track commitment still the one
+    revealed at block 9077591 (`role=miner, track=private,
+    image_repo=ghcr.io/fapulito/cricket-miner, image_tag=v3.0.0,
+    element_id=manako/DetectCricketDelivery`). `curl` against the dedicated IPv4:
+    `/health` -> 200, `/challenge` GET -> 422. No extrinsic, no wallet secret read or logged, no
+    `.env` touched
+  - **Result -- test run**: independently re-ran the full set (`test_prediction_accuracy_preservation.py`
+    + `test_prediction_accuracy_chain_readonly.py` + `test_prediction_accuracy_latency_baseline.py`
+    + `test_header_gate.py`) in WSL `.venv-sv`: **401 passed, 16 skipped in 4.86s** (skips are the
+    opt-in `SV_ACCURACY_CHAIN=1`/`SV_ACCURACY_LATENCY=1`/docker-build gated tests, correctly
+    inactive by default). Stray `** On entry to DLASCL parameter number ... had an illegal value`
+    lines in the output are native LAPACK/OpenCV stderr noise from the NaN/Inf-pixel homography
+    test cases -- exactly the degenerate input those cases intentionally feed in, not a failure;
+    confirmed by the explicit `401 passed, 16 skipped` summary line preceding them. The broader
+    `tests/private/` suite (533 passed, 26 skipped, 1 pre-existing unrelated failure in
+    `test_soccer_action_branch_runs_the_real_predictor_end_to_end`, confirmed pre-existing by
+    stashing and re-running against clean unfixed code) was also reported by the implementing
+    subagent; this orchestrator independently re-confirmed the smaller, task-2-specific set above
   - Mark complete when the tests are written, run, and passing against unfixed code
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11_
 
