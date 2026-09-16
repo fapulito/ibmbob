@@ -473,7 +473,7 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
       still exactly unchanged (be13 92.8%, efc0 19.4%, 8b97 21.1%), confirming the two concurrent
       changes compose without interfering with each other's preservation guarantees
 
-  - [x] 3.2 G1 â€” shot selection
+  - [ ] 3.2 G1 â€” shot selection
     - Segment the clip into shots by frame-to-frame similarity on a strided, downscaled sample, so
       the cost stays bounded
     - Score each shot for "behind-the-arm pitch view" by reusing
@@ -551,7 +551,7 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
       unrelated failure (same `test_soccer_action_branch_...` issue noted in 3.1's result). Served
       scores confirmed still unchanged in the combined run: be13 92.8%, efc0 19.4%, 8b97 21.1%
 
-  - [ ] 3.3 G2 â€” camera classification and honest validity
+  - [x] 3.3 G2 â€” camera classification and honest validity
     - Classify `end_on` when `_detect_wicket_endon` finds a centred wicket group with a plausible
       transverse scale; `side_on` only when two wicket-like clusters sit roughly
       `PITCH_LENGTH_M * px_per_m` apart. Replace the "any two vertical-edge clusters more than 25%
@@ -572,6 +572,46 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
     - _Expected_Behavior: behind-the-arm clips classify `end_on`; `valid` implies a measurement on both camera paths_
     - _Preservation: `_analyse_sideon` stays reachable and contract-compliant for genuinely side-on clips (clause 3.10)_
     - _Requirements: 2.5, 2.6, 2.7, 2.8, 2.11, 3.10_
+    - **Result**: `pitch_homography.py`'s `_detect_camera_type` now reuses `_detect_wicket_endon`/
+      `_vertical_bars` instead of the old "any two vertical-edge clusters >25% of frame width
+      apart" heuristic: a centred single wicket group -> `end_on`; otherwise, two wicket-like bar
+      clusters whose separation (converted to metres via their own implied transverse scale,
+      bar-height / `STUMP_HEIGHT_M`) is within 35% of `PITCH_LENGTH_M` (20.12 m) -> `side_on`;
+      neither -> `end_on` (unchanged default). `_try_calibrate_sideon`'s four failure branches
+      ("no lines", "insufficient vertical lines", "insufficient clusters", "span too small") no
+      longer set `_valid = True` -- only the success path does; the resolution-scaled fallback
+      anchor/scale from `__init__` (`_stump_px`/`_px_per_m_x`) is left in place on every failure,
+      mirroring the end-on path's `anchor_calibrated` pattern (side-on has no separate anchor-only
+      flag since its fallback anchor was already always available regardless of `valid`, unlike
+      end-on's two-stage anchor/depth split). Added `logger.debug` calls in both functions:
+      cluster count, separation in metres vs. pitch length, and the chosen camera type on the
+      classification path; cluster count and measured span in metres on the calibration success
+      path. Reconciled both docstrings (module and class) to state `valid` means "the DEPTH axis
+      was independently measured" (end-on) / "the pitch-length span was measured from the frame"
+      (side-on), replacing the stale "wicket found and transverse scale corroborated" wording
+    - **Result -- per-fixture harness comparison against task 3.2's baseline**: be13 and efc0
+      unchanged (`end_on`/`valid=False`/`anchor_calibrated=True`, 26/21 pts, served 92.8%/19.4%) --
+      both were already correctly classified `end_on`, so this task has no effect on them, as
+      expected. 8b97 and f81d flip from the previous spurious `side_on`/`valid=True`/n-a to the
+      correct `end_on`/`valid=False`/`anchor_calibrated=True`, exactly as this task predicted:
+      8b97's chain goes from 0 points (wrong search zone under the old misclassification) to 40
+      points once routed through `_track_endon`, and f81d's from 10 to 10 (still routed
+      end-on, still no groundtruth). Both now resolve `auto`->`constants` instead of the previous
+      spurious `auto`->`physics`, because `valid` is honestly False until task 3.4 measures the
+      depth axis: 8b97's served score moves 21.1%->10.4% (the `_default_fields()` comparator the
+      task 1 probes identified, not a regression -- the old 21.1% was `physics` running on a
+      camera type that was never really side-on); f81d remains unscoreable (no groundtruth).
+      This is the exact "move from `physics` to `constants` on a spuriously-valid fixture" outcome
+      the task description called out as correct and expected
+    - **Result -- test run**: new `tests/private/test_camera_classification.py` (10 tests) passes
+      standalone and inside the full suite. Combined run of
+      `test_prediction_accuracy_preservation.py` + `test_prediction_accuracy_chain_readonly.py` +
+      `test_prediction_accuracy_latency_baseline.py` + `test_header_gate.py` +
+      `test_v25_baseline_predictions.py` + `test_camera_classification.py`: 460 passed, 16
+      skipped. Full `tests/private/` suite (excluding the pre-existing `fiber`-import-blocked
+      file): 583 passed, 23 skipped, 1 pre-existing unrelated failure
+      (`test_soccer_action_branch_runs_the_real_predictor_end_to_end`) -- no new failures, no
+      regressions
 
   - [ ] 3.4 G3 â€” measure the end-on depth axis
     - `_measure_depth_scale` currently accepts only the batter's popping crease and has never
