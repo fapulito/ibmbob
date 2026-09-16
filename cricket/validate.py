@@ -102,11 +102,23 @@ bt_mod = _import_from_file("scorevision.miner.private_track.ball_tracker",
                             PRIVATE_TRACK / "ball_tracker.py")
 tr_mod = _import_from_file("scorevision.miner.private_track.trajectory",
                             PRIVATE_TRACK / "trajectory.py")
+# shot_selection.py does `from scorevision.miner.private_track.pitch_homography
+# import PitchHomography` internally — because ph_mod above was already
+# registered in sys.modules under that exact dotted name before this load,
+# that import resolves to the SAME PitchHomography class the harness uses
+# everywhere else, not a second copy.
+sel_mod = _import_from_file("scorevision.miner.private_track.shot_selection",
+                             PRIVATE_TRACK / "shot_selection.py")
 
 PitchHomography    = ph_mod.PitchHomography
 BallTracker        = bt_mod.BallTracker
 TrajectoryAnalyser = tr_mod.TrajectoryAnalyser
+select_delivery_shot = sel_mod.select_delivery_shot
 MODE_ENV_VAR        = tr_mod._MODE_ENV_VAR  # "CRICKET_PREDICTOR_MODE" — read from production, not restated
+
+# Fallback calibration fraction — mirrors predictor.py's _FALLBACK_CALIBRATION_FRAC,
+# used only when shot selection finds no shot scoring as a pitch view at all.
+_FALLBACK_CALIBRATION_FRAC = 0.55
 
 # ---------------------------------------------------------------------------
 # Scoring config — verified against, and preferably LOADED FROM, the
@@ -351,18 +363,43 @@ def run_fixture(stem):
     print("=" * 100)
 
     # ------------------------------------------------------------------ #
-    # 1. Load video metadata + reference frame
+    # 1. Load video metadata, select the delivery shot (G1), reference frame
     # ------------------------------------------------------------------ #
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    delivery_start = int(frame_count * 0.55)
+    cap.release()
+
+    # Mirrors predictor.py: shot selection is the single source of truth for
+    # both the calibration frame (here) and the tracker's search window
+    # (passed into tracker.track() below), replacing the old independent
+    # int(frame_count * 0.55) / _WIN_START/_WIN_END fixed offsets.
+    selection = select_delivery_shot(video_path, total_frames=frame_count)
+    best_shot = selection.best()
+    if best_shot is not None:
+        delivery_start = best_shot.mid_frame
+        shot_note = (f"shot #{best_shot.index} frames[{best_shot.start_frame},{best_shot.end_frame}] "
+                     f"({100.0*best_shot.start_frame/frame_count:.1f}%-{100.0*best_shot.end_frame/frame_count:.1f}%), "
+                     f"nbars={best_shot.wicket.get('nbars')} corroborated={best_shot.wicket.get('corroborated')} "
+                     f"px_lat={best_shot.wicket.get('px_lat', 0.0):.1f}")
+    else:
+        delivery_start = int(frame_count * _FALLBACK_CALIBRATION_FRAC)
+        shot_note = "NO DELIVERY SHOT FOUND — falling back to fixed 55% frame"
+
+    cap = cv2.VideoCapture(str(video_path))
     cap.set(cv2.CAP_PROP_POS_FRAMES, delivery_start)
     ret, ref_frame = cap.read()
     cap.release()
 
     print(f"Video: fps={fps}  frames={frame_count}  "
           f"calibration_frame={delivery_start} ({100.0*delivery_start/frame_count:.1f}% of clip)")
+    print(f"Shot selection: {len(selection.shots)} shot(s) segmented, found_any={selection.found_any}")
+    print(f"  selected: {shot_note}")
+    for shot in selection.shots:
+        marker = " <= selected" if best_shot is not None and shot.index == best_shot.index else ""
+        print(f"    shot #{shot.index} frames[{shot.start_frame},{shot.end_frame}] "
+              f"({100.0*shot.start_frame/frame_count:.1f}%-{100.0*shot.end_frame/frame_count:.1f}%) "
+              f"found={shot.found}{marker}")
 
     # ------------------------------------------------------------------ #
     # 2. Build homography
@@ -382,7 +419,7 @@ def run_fixture(stem):
     tracker = BallTracker(model_path=None)
     print("Tracking ball...")
     t0 = time.perf_counter()
-    traj = tracker.track(video_path, homography=hom)
+    traj = tracker.track(video_path, homography=hom, shot_selection=selection)
     tracking_seconds = time.perf_counter() - t0
     print(f"Trajectory: {len(traj)} points  (tracking wall-clock: {tracking_seconds:.2f}s)")
     frame_range_pct = chain_frame_range_pct(traj, frame_count)
@@ -435,6 +472,8 @@ def run_fixture(stem):
         "camera": camera_type,
         "hom_valid": hom.valid,
         "anchor_calibrated": anchor_calibrated,
+        "shot_found": selection.found_any,
+        "shot_note": shot_note,
         "traj_pts": len(traj),
         "chain_frame_range_pct": frame_range_pct,
         "world_pts": diag["pts"],

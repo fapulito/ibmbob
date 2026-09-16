@@ -14,6 +14,20 @@
         "chatSessionId": "sess_2c7f9952-859a-4369-bd4c-2a186ea064cd",
         "timestamp": 1789542129175
       }
+    ],
+    "3.1 G5 â€” field coverage and blending (no CV, no video)": [
+      {
+        "executionId": "7869d131-751d-4ebd-8f53-655bd8d36499",
+        "chatSessionId": "sess_2c7f9952-859a-4369-bd4c-2a186ea064cd",
+        "timestamp": 1789549064629
+      }
+    ],
+    "3.2 G1 â€” shot selection": [
+      {
+        "executionId": "7869d131-751d-4ebd-8f53-655bd8d36499",
+        "chatSessionId": "sess_2c7f9952-859a-4369-bd4c-2a186ea064cd",
+        "timestamp": 1789549065175
+      }
     ]
   }
 }

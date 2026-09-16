@@ -408,7 +408,7 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
 
 - [ ] 3. Fix for near-zero prediction accuracy
 
-  - [ ] 3.1 G5 â€” field coverage and blending (no CV, no video)
+  - [x] 3.1 G5 â€” field coverage and blending (no CV, no video)
     - Give `_select_confident_fields` a per-field branch for every field
       `_analyse_endon`/`_analyse_sideon` computes, so the 7 fields carrying 0.46 of the total
       weight (`release_z`, `impact_x`, `impact_z`, `interception_distance`, `stump_z`,
@@ -427,8 +427,53 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
     - _Expected_Behavior: Property 3 (a perfect measurement scores 1.0) and Property 4 (every computed field can reach the wire)_
     - _Preservation: `constants` mode unchanged; 13-field contract unchanged; degrade-never-raise unchanged_
     - _Requirements: 2.16, 2.17, 2.19, 3.1, 3.2, 3.4_
+    - **Result**: `_select_confident_fields` in `trajectory.py` now has a per-field confidence
+      branch for all 13 `TRAJECTORY_FIELDS`, not just 6. The 7 previously-discarded fields
+      (`release_z`, `impact_x`, `impact_z`, `interception_distance`, `stump_z`, `swing_angle`,
+      `deviation`) each get a plausibility gate lifted directly from the clip range their own
+      computation already uses (`release_z` [1.5, 2.5] m; `swing_angle`/`deviation` [-15, 15]Â°
+      matching `_angles_endon`'s own clip; `stump_z` [`_MIN_STUMP_Z`, `_MAX_STUMP_Z`]; `impact_z`
+      [0.0, 1.5]; `impact_x`/`interception_distance` [0.0, `_PITCH_LENGTH`]), gated on
+      `depth_travel > 8.0` so both camera paths get coverage. Removed the 0.6/0.4 blend for
+      `bounce_x`/`kph` and the 0.7/0.3-style blends for the four lateral fields -- every field
+      that passes its gate is now returned exactly as measured, for all 13 uniformly. Added
+      logging naming which fallback constant set was returned and why (`mode=constants` vs
+      `<3 points` vs exception vs empty analyser result), so the two near-zero modes are no
+      longer indistinguishable from logs alone
+    - **Result -- Property 3/4 verification (`tests/private/test_field_coverage_and_blending.py`,
+      new, 43 tests, all pass)**: Property 4 (field coverage) confirmed via 20 synthetic end-on
+      delivery trajectories -- each of the 7 previously-discarded fields now appears in
+      `overrides` for at least one generated trajectory (structurally impossible before this
+      fix). Property 3 (blending) confirmed over the full plausible range of `bounce_x`
+      (3.0-12.0 m) and `kph` (50-150 kph), including Probe 9's exact recorded counterexamples --
+      `bounce_x` 5.622/6.743 and `kph` 129.21/95.32 all now score exactly 1.0 (previously 0, or
+      0.024 for 8b97's kph)
+    - **Result -- harness confirms the served score is unchanged, as the task predicted**: ran
+      `cricket/validate.py` before/after. Served (`constants`/`auto`) scores: be13 92.8%->92.8%,
+      efc0 19.4%->19.4%, 8b97 10.4%(constants)/21.1%(auto)->10.4%/21.1% -- all bit-for-bit
+      unchanged, because `hom.valid=False` still gates `auto` to `constants` on be13 (G3 not yet
+      fixed) and efc0/8b97's tracked chains don't have the lateral spread to trigger the newly
+      reachable fields materially. The one number that DID move -- be13's diagnostic-only
+      `physics` score (70.0%->33.6% in isolation; 6.8% in the final combined run alongside 3.2's
+      shot-selection change, since a different chain was tracked) -- was investigated rather than
+      assumed fine: be13's homography is still uncalibrated (`hom.valid=False`), so the newly
+      reachable fields (`deviation`, `swing_angle`, `impact_x`, `interception_distance`) are
+      themselves badly wrong on this fixture's fallback-calibrated computation (e.g. `deviation`
+      -7.237 vs GT 1.555) -- they were always computed this badly, they were just silently
+      discarded before and replaced by a default that happened to score better by coincidence.
+      Exposing more of a still-miscalibrated computation lowered a diagnostic number that is
+      never served in production today (`auto`->`constants` on be13). This is exactly the
+      dependency the design predicted: G5 cannot raise the score until G1-G4 open, because there
+      is no correct measurement yet to un-blend on be13 either
+    - **Result -- combined verification with 3.2 (ran concurrently on the same repo)**: full
+      `tests/private/` suite (excluding the pre-existing `fiber`-import-blocked file) after both
+      3.1 and 3.2 landed together: 592 passed, 26 skipped, 1 pre-existing unrelated failure
+      (`test_soccer_action_branch_runs_the_real_predictor_end_to_end`, a be13 video-path issue
+      predating both tasks). `cricket/validate.py` re-run with both changes present: served scores
+      still exactly unchanged (be13 92.8%, efc0 19.4%, 8b97 21.1%), confirming the two concurrent
+      changes compose without interfering with each other's preservation guarantees
 
-  - [ ] 3.2 G1 â€” shot selection
+  - [x] 3.2 G1 â€” shot selection
     - Segment the clip into shots by frame-to-frame similarity on a strided, downscaled sample, so
       the cost stays bounded
     - Score each shot for "behind-the-arm pitch view" by reusing
@@ -449,6 +494,62 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
     - _Expected_Behavior: pitch visible in the selected calibration frame; chain lies inside the selected delivery shot_
     - _Preservation: 30 s budget (clause 3.3) â€” this task adds work, so its wall-clock is measured, not assumed_
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 3.3_
+    - **Result**: new module `scorevision/miner/private_track/shot_selection.py` with two stages:
+      `segment_shots()` (strided every-5th-frame, downscaled-to-64px, grayscale-histogram-
+      correlation cut detection at a 0.65 threshold, merging fragments under 3% of the clip into
+      their predecessor) and `select_delivery_shot()` (scores each segment's midpoint frame via
+      `PitchHomography(None)._detect_wicket_endon(frame)` -- verified this instance method only
+      reads its `frame` argument, so `PitchHomography(None)` is a cheap, stateless way to reuse
+      the existing wicket detector across shots with no new machinery). Shots rank by
+      `(corroborated, nbars, px_lat)` -- exactly what `_detect_wicket_endon` already returns, no
+      new scoring invented. `predictor.py`'s hardcoded `int(frame_count * 0.55)` calibration frame
+      is replaced by the selected shot's midpoint, falling back to the old 0.55 fraction (now a
+      named constant) with an explicit "shot_selection: no delivery shot found" log line when no
+      shot scores as a pitch view -- distinguishable from `chain=0` as the task requires.
+      `ball_tracker.py`'s `track()` gained a `shot_selection` parameter; `_track_endon`/
+      `_track_sideon` now loop over candidate shot windows (best first, then others ranked
+      descending) instead of rescanning the whole clip on a short chain, and a chain can no
+      longer span a shot boundary since each window's blob detection never sees frames outside it
+    - **Result -- unit tests (`tests/private/test_shot_selection.py`, new, 16 tests, all pass)**:
+      synthetic clips via `cv2.VideoWriter` (no real footage needed) covering cut detection,
+      no-fragmentation on uniform clips, tiny-tail merging, whole-clip coverage; ranking tests with
+      canned wicket dicts confirming corroborated > nbars > px_lat priority; end-to-end
+      `select_delivery_shot` with `_detect_wicket_endon` monkeypatched, plus a "nothing scores"
+      case and a scoring-cap cost-bound case; `BallTracker._candidate_windows` fallback and
+      shot-boundary-never-merges tests
+    - **Result -- per-fixture harness comparison against task 1's baseline**: be13's calibration
+      frame moved 55.0%->68.9% (shot #6, 52.0-85.9%, corroborated) and efc0's moved 55.0%->14.6%
+      (shot #2, 10.7-18.5%, uncorroborated) -- both landed inside a *different* delivery within the
+      same broadcast montage, not a close-up, so this is a real behavioural change, not a
+      no-op. Because both still resolve to `mode=auto->constants` (G3 not yet fixed) the **served
+      score is bit-for-bit unchanged** on both (92.8%/19.4%), which is the property the task
+      actually asked to preserve -- "no material change" was about the score reaching the wire,
+      not about pixel-identical frame selection, and that nuance is recorded rather than glossed
+      over. 8b97's calibration frame moved from the old hardcoded 55%=280 to 23.9%=122 (shot #1,
+      6.9-41.0%, uncorroborated) -- correctly landing inside the real delivery this time -- but
+      chain is still 0 and score still 21.1%, because camera classification (G2, task 3.3, not yet
+      run) still misclassifies this behind-the-arm clip `side_on`, routing it through
+      `_track_sideon`'s wrong search zone. This is exactly the task's own predicted dependency: G1
+      alone cannot fix 8b97's chain=0 while G2 is still broken. f81d (no groundtruth): shot #0
+      (0-14.6%, corroborated) correctly identified, calibration frame moved to 7.3%, same G2
+      blocker, behaviour recorded not scored
+    - **Result -- live challenge 65705, behaviour only (no groundtruth exists)**: downloaded via
+      the documented User-Agent workaround (640x360, 25fps, 425 frames). Shot selection found 4
+      segments, 3 scoring as weak wicket-like evidence (uncorroborated, single-bar, tied on
+      corroborated/nbars, broken by px_lat); selected shot #3 (84.7-99.8%, calibration frame 92.2%
+      of clip). Result: chain=0, mode=auto->constants -- the same qualitative behaviour as the
+      original live fly log, but now for a documented, diagnosable reason (only weak single-bar
+      evidence found anywhere in this heavily compressed/letterboxed clip) instead of an
+      undiagnosed fixed-offset miss. Shot-selection + tracking wall-clock: 2.46s
+    - **Result -- latency**: re-measured tracking wall-clock through the harness: be13 4.6s,
+      efc0 0.9s, 8b97 3.2s, f81d 2.0s -- all comfortably under the recorded upper bounds in
+      `test_prediction_accuracy_latency_baseline.py` (6/10/15/15s). Re-ran that file's opt-in
+      `SV_ACCURACY_LATENCY=1` re-verification: all 8 pass, confirming shot segmentation's added
+      cost did not push anything toward the 30s budget
+    - **Result -- combined verification with 3.1 (ran concurrently on the same repo)**: full
+      `tests/private/` suite after both landed together: 592 passed, 26 skipped, 1 pre-existing
+      unrelated failure (same `test_soccer_action_branch_...` issue noted in 3.1's result). Served
+      scores confirmed still unchanged in the combined run: be13 92.8%, efc0 19.4%, 8b97 21.1%
 
   - [ ] 3.3 G2 â€” camera classification and honest validity
     - Classify `end_on` when `_detect_wicket_endon` finds a centred wicket group with a plausible
@@ -595,7 +696,7 @@ Wave definitions â€” tasks within a wave may run in parallel; waves run in 
     `fly logs -a cricket-delivery-miner` for the next challenge
   - Record the new diagnostics â€” selected shot, camera type, depth-landmark provenance, chain
     length, world points, resolved mode â€” alongside the score the dashboard reports
-  - **This confirms behaviour, not causation.** Per-challenge groundtruth is never visible, so a
+    - **This confirms behaviour, not causation.** Per-challenge groundtruth is never visible, so a
     single live score cannot attribute an improvement to a specific gate. Treat a run of scores as
     weak evidence and the harness as the strong evidence
   - _Requirements: 2.27, 3.6, 3.8_
