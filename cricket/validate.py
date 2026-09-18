@@ -50,7 +50,7 @@ TURBOVISION   = Path(__file__).parent / "turbovision"
 PRIVATE_TRACK = TURBOVISION / "scorevision" / "miner" / "private_track"
 VALIDATOR_SCORING = TURBOVISION / "scorevision" / "validator" / "central" / "private_track" / "scoring.py"
 FIXTURE_DIR   = TURBOVISION / "data-training" / "cricket"
-FIXTURE_SUBDIRS = (FIXTURE_DIR, FIXTURE_DIR / "foundation")
+FIXTURE_SUBDIRS = (FIXTURE_DIR, FIXTURE_DIR / "foundation", FIXTURE_DIR / "groundcheck")
 
 # stem -> (video filename, groundtruth filename or None)
 # groundtruth=None means the fixture is a behaviour-only probe: it can be run
@@ -60,7 +60,11 @@ FIXTURES = {
     "be13": ("be1382745ea10902e8ebb8bc74c3533e4f8f76eb.mp4", "groundtruth-be13.json"),
     "efc0": ("efc05ed4ef0b266d16385ce497d742e7ae75b4b0.mp4", "groundtruth-efc0.json"),
     "8b97": ("8b97ef5831a40782462222c847b5cdd3518101bd.mp4", "groundtruth-8b97.json"),
-    "f81d": ("f81d092b6117be1126e0d6be97220b3f9a2870eb.mp4", None),
+    "f81d": ("f81d092b6117be1126e0d6be97220b3f9a2870eb.mp4", "groundtruth-f81d.json"),
+    "9ef5": ("9ef5c0e6e68a01d5435499bc0527c04386e527fc.mp4", "groundtruth-9ef5.json"),
+    "98e5": ("98e537a2a3555da28ca7eea3227babb61df228d1.mp4", "groundtruth-98e5.json"),
+    "6a79": ("6a79fbe0fd6792126c69087568f7f08318dcf449.mp4", "groundtruth-6a79.json"),
+    "bad1": ("bad1530d039b7146a8ce4a1b1a6b29502c3c9491.mp4", "groundtruth-bad1.json"),
 }
 
 # Fixtures that have a groundtruth and are therefore scoreable.
@@ -511,7 +515,8 @@ def run_fixture(stem):
             row_vals.append(f"{p:.3f}" if p is not None else "None")
         s_other = score_field(OTHER_MINER.get(field), g, tol)
         total_other += w * s_other
-        print(f"{field:<22} " + " ".join(f"{v:>10}" for v in row_vals) + f" {g:>9.3f} {w:>5.2f}")
+        g_str = f"{g:.3f}" if g is not None else "None"
+        print(f"{field:<22} " + " ".join(f"{v:>10}" for v in row_vals) + f" {g_str:>9} {w:>5.2f}")
 
     print("-" * len(hdr))
     for m in MODES:
