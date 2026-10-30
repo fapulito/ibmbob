@@ -1,0 +1,14 @@
+{
+ "kph": 118.82,
+ "release_y": -0.528,
+ "release_z": 2.01,
+ "bounce_x": 6.144,
+ "bounce_y": -0.12,
+ "impact_x": 1.864,
+ "impact_y": -0.053,
+ "impact_z": 0.588,
+ "stump_y": -0.043,
+ "stump_z": 0.727,
+ "swing_angle": 0.695,
+ "deviation": 0.827
+}

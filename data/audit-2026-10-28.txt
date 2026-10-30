@@ -1,0 +1,29 @@
+rows=13824
+
+== null rates / distributions ==
+kph          n=13822 null=    2 mean= 112.790 median= 118.820 sd= 21.418 p5=  81.472 p95= 140.360 min=  49.360 max= 152.170
+release_y    n=13820 null=    4 mean=  -0.207 median=  -0.528 sd=  0.682 p5=  -1.020 p95=   0.903 min=  -1.467 max=   2.574
+release_z    n=13819 null=    5 mean=   2.011 median=   2.010 sd=  0.141 p5=   1.815 p95=   2.238 min=   1.037 max=   6.727
+bounce_x     n=13822 null=    2 mean=   6.231 median=   6.144 sd=  2.696 p5=   1.904 p95=  10.872 min=  -8.980 max=  14.812
+bounce_y     n=13815 null=    9 mean=  -0.098 median=  -0.120 sd=  0.368 p5=  -0.671 p95=   0.527 min=  -1.268 max=   1.299
+impact_x     n=11857 null= 1967 mean=   1.907 median=   1.864 sd=  0.576 p5=   1.041 p95=   2.972 min=   0.267 max=   4.277
+impact_y     n=11853 null= 1971 mean=  -0.057 median=  -0.053 sd=  0.337 p5=  -0.618 p95=   0.501 min=  -1.288 max=   1.342
+impact_z     n=11855 null= 1969 mean=   0.607 median=   0.588 sd=  0.302 p5=   0.169 p95=   1.164 min=   0.016 max=   1.985
+stump_y      n=13819 null=    5 mean=  -0.046 median=  -0.043 sd=  0.414 p5=  -0.741 p95=   0.641 min=  -1.898 max=   1.714
+stump_z      n=13808 null=   16 mean=   0.762 median=   0.727 sd=  0.327 p5=   0.273 p95=   1.380 min=   0.003 max=   3.046
+swing_angle  n=13822 null=    2 mean=   0.949 median=   0.695 sd=  0.869 p5=   0.058 p95=   2.640 min=   0.000 max=  17.615
+deviation    n=13389 null=  435 mean=   1.258 median=   0.827 sd=  1.359 p5=   0.042 p95=   3.976 min=   0.000 max=  24.025
+OLD              v2 constants   mean score =  20.2%  median =  19.1%
+OLD              global mean    mean score =  24.4%  median =  22.8%
+OLD              global median  mean score =  25.9%  median =  24.6%
+NEW(approx tol)  v2 constants   mean score =  19.2%  median =  18.3%
+NEW(approx tol)  global mean    mean score =  22.9%  median =  21.9%
+NEW(approx tol)  global median  mean score =  24.8%  median =  24.0%
+
+kph bands: {'<80': '408 (3.0%)', '80-100': '4743 (34.3%)', '100-120': '1929 (14.0%)', '120-135': '4390 (31.8%)', '>=135': '2352 (17.0%)'}
+corr kph vs bounce_x: +0.23
+corr kph vs stump_z: +0.17
+corr bounce_x vs stump_z: +0.85
+corr bounce_x vs impact_x: -0.06
+corr release_y vs bounce_y: +0.61
+corr release_y vs stump_y: +0.08

@@ -42,3 +42,4 @@ cricket/indexprivate.json
 
 # --- throwaway venvs (e.g. .venv-bt) ---
 .venv*
+data/videos_sample/
